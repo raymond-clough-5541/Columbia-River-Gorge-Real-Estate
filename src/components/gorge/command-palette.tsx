@@ -126,7 +126,9 @@ export function CommandPalette({
      behind isTypingTarget in shortcuts.tsx). */
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+      // e.key?.toLowerCase() — the key can be undefined on synthetic/IME
+      // events; the optional chain keeps the arm from ever throwing.
+      if ((e.metaKey || e.ctrlKey) && e.key?.toLowerCase() === "k") {
         e.preventDefault();
         onOpenChange(!open);
       }

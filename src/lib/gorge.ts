@@ -247,6 +247,24 @@ export function futureValueDepletionAdjusted(
   return futureValue(valueAtDepletion, POST_DEPLETION_CAGR, nPost);
 }
 
+/**
+ * Deflates a nominal future value back into start-year (2026) dollars —
+ * the "real terms" lens (round 10). A $1.14M nominal 2046 value at 4.7%
+ * CAGR is only ~$686k of 2026 purchasing power at a 2.5% inflation
+ * assumption; the real CAGR is (1 + r) / (1 + i) − 1 ≈ 2.2%. Composes
+ * cleanly with the depletion-adjusted regime (deflation applies to
+ * whatever nominal path the regime produced).
+ */
+export function realValue(nominal: number, inflationPct: number, years: number): number {
+  if (years <= 0) return nominal;
+  return nominal / Math.pow(1 + inflationPct / 100, years);
+}
+
+/** Real (inflation-adjusted) CAGR implied by a nominal rate. */
+export function realCagr(cagrPct: number, inflationPct: number): number {
+  return ((1 + cagrPct / 100) / (1 + inflationPct / 100) - 1) * 100;
+}
+
 export type CagrTier = "elite" | "strong" | "moderate" | "baseline";
 
 export function cagrTier(cagr: number): CagrTier {

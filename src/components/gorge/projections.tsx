@@ -14,6 +14,7 @@ import {
 import {
   ArrowLeft,
   BookmarkPlus,
+  Coins,
   Download,
   Flame,
   FolderOpen,
@@ -41,6 +42,8 @@ import {
   futureValue,
   futureValueDepletionAdjusted,
   impliedCagr,
+  realCagr,
+  realValue,
   type Submarket,
 } from "@/lib/gorge";
 import {
@@ -72,6 +75,10 @@ interface SavedScenario {
   cagr: number;
   horizon: number;
   showScenario: boolean;
+  /** Round 10 real-terms lens — optional so pre-round-10 saves stay
+   *  loadable (absent = nominal, the original semantics). */
+  realTerms?: boolean;
+  inflation?: number;
   savedAt: string;
 }
 const STORAGE_KEY = "crgnsa-saved-scenarios";
@@ -143,7 +150,13 @@ interface ShareState {
   horizon: number;
   showScenario: boolean;
   depletionAdjusted: boolean;
+  /** Round 10: real-terms lens rides as v=1 + i=<deflator>. Absent
+   *  params decode to nominal mode — every pre-round-10 link still works. */
+  realTerms: boolean;
+  inflation: number;
 }
+
+const DEFAULT_INFLATION = 2.5;
 
 function readSharedFromHash(): ShareState | null {
   if (typeof window === "undefined") return null;
@@ -164,6 +177,8 @@ function readSharedFromHash(): ShareState | null {
       horizon: clampNum(Number(params.get("n")), 5, 25, 20),
       showScenario: params.get("s") !== "0",
       depletionAdjusted: params.get("d") === "1",
+      realTerms: params.get("v") === "1",
+      inflation: clampNum(Number(params.get("i")), 1.5, 4, DEFAULT_INFLATION),
     };
   } catch {
     return null;
@@ -174,6 +189,32 @@ function clampNum(v: number, min: number, max: number, fallback: number): number
   return Number.isFinite(v) && v >= min && v <= max ? v : fallback;
 }
 
+/* ---------------------------------------------------------------- */
+/* Drill origins (round 10): overview KPI chips, the matrix pinned    */
+/* set, and submarket profile CTAs all preload inputs here. The      */
+/* breadcrumb chip returns to whichever origin stamped the flag —    */
+/* "overview" | "matrix" | "submarket:<slug>".                        */
+/* ---------------------------------------------------------------- */
+
+type DrillOrigin =
+  | { kind: "overview" }
+  | { kind: "matrix"; via?: "pins" | "compare" }
+  | { kind: "submarket"; slug: string };
+
+/** Resolves a drill flag into a typed origin, validating any submarket
+ *  slug against the live list (a stale bookmarked flag degrades to no
+ *  chip rather than a dead back-link). */
+function parseDrillFlag(raw: string | null, slugs: string[]): DrillOrigin | null {
+  if (raw === "overview") return { kind: "overview" };
+  if (raw === "matrix" || raw === "matrix-pins") return { kind: "matrix", via: "pins" };
+  if (raw === "matrix-compare") return { kind: "matrix", via: "compare" };
+  if (raw?.startsWith("submarket:")) {
+    const slug = raw.slice("submarket:".length);
+    if (slugs.includes(slug)) return { kind: "submarket", slug };
+  }
+  return null;
+}
+
 function buildShareHash(state: ShareState): string {
   const params = new URLSearchParams();
   if (state.selected.length > 0) params.set("m", state.selected.join(","));
@@ -182,6 +223,10 @@ function buildShareHash(state: ShareState): string {
   params.set("n", String(state.horizon));
   params.set("s", state.showScenario ? "1" : "0");
   params.set("d", state.depletionAdjusted ? "1" : "0");
+  if (state.realTerms) {
+    params.set("v", "1");
+    params.set("i", state.inflation.toFixed(1));
+  }
   return `#/projections?${params.toString()}`;
 }
 
@@ -260,9 +305,16 @@ export function ProjectionsView({
   const [horizon, setHorizon] = useState(20);
   const [showScenario, setShowScenario] = useState(true);
   const [depletionAdjusted, setDepletionAdjusted] = useState(false);
+  /** Round 10 — real-terms lens: deflates every curve (markets, scenario,
+   *  ReferenceDots, outcome cards, series table) back into 2026 dollars
+   *  at the configurable inflation rate. Composes with the depletion
+   *  regime: the nominal path is computed first, then deflated. */
+  const [realTerms, setRealTerms] = useState(false);
+  const [inflation, setInflation] = useState(DEFAULT_INFLATION);
   const [sharedNotice, setSharedNotice] = useState(false);
-  /** Workspace the preset was drilled from — surfaces a back-link chip. */
-  const [backTo, setBackTo] = useState<"overview" | "matrix" | null>(null);
+  /** Where the preset was drilled from — surfaces a back-link chip.
+   *  Round 10: submarket profiles join overview/matrix as origins. */
+  const [backTo, setBackTo] = useState<DrillOrigin | null>(null);
 
   useEffect(() => {
     const s = readSharedFromHash();
@@ -275,12 +327,19 @@ export function ProjectionsView({
     setHorizon(s.horizon);
     setShowScenario(s.showScenario);
     setDepletionAdjusted(s.depletionAdjusted);
+    setRealTerms(s.realTerms);
+    setInflation(s.inflation);
     setSharedNotice(true);
-    // Breadcrumb: overview KPI drilldowns and the matrix pinned-set chip
-    // stamp sessionStorage right before navigating here. Consumed once.
+    // Breadcrumb: overview KPI drilldowns, the matrix pinned-set chip and
+    // submarket profile CTAs stamp sessionStorage right before navigating
+    // here. Consumed once.
     try {
-      const from = sessionStorage.getItem("crgnsa-drill-from");
-      if (from === "overview" || from === "matrix") setBackTo(from);
+      setBackTo(
+        parseDrillFlag(
+          sessionStorage.getItem("crgnsa-drill-from"),
+          submarkets.map((m) => m.slug)
+        )
+      );
       sessionStorage.removeItem("crgnsa-drill-from");
     } catch {
       /* storage unavailable — no back-link */
@@ -299,21 +358,29 @@ export function ProjectionsView({
     [depletionAdjusted]
   );
 
+  /** Nominal → display value: the real-terms lens deflates whatever the
+   *  active regime produced back into 2026 dollars. Identity when off. */
+  const displayValue = useCallback(
+    (nominal: number, n: number) =>
+      realTerms ? realValue(nominal, inflation, n) : nominal,
+    [realTerms, inflation]
+  );
+
   const series = useMemo(() => {
     const points: Record<string, number | boolean>[] = [];
     for (let n = 0; n <= horizon; n++) {
       const year = START_YEAR + n;
       const row: Record<string, number | boolean> = { year };
       for (const s of selectedMarkets) {
-        row[s.slug] = marketValue(s, n);
+        row[s.slug] = displayValue(marketValue(s, n), n);
       }
       if (showScenario) {
-        row.scenario = futureValue(pv, cagr, n);
+        row.scenario = displayValue(futureValue(pv, cagr, n), n);
       }
       points.push(row);
     }
     return points;
-  }, [selectedMarkets, horizon, pv, cagr, showScenario, marketValue]);
+  }, [selectedMarkets, horizon, pv, cagr, showScenario, marketValue, displayValue]);
 
   const depletionBySlug = useMemo(() => {
     const map: Record<string, number> = {};
@@ -321,8 +388,14 @@ export function ProjectionsView({
     return map;
   }, [selectedMarkets]);
 
-  const scenarioFv = futureValue(pv, cagr, horizon);
+  const scenarioFv = displayValue(futureValue(pv, cagr, horizon), horizon);
   const scenarioMultiple = Math.pow(1 + cagr / 100, horizon);
+  /** Real multiple of the down stroke under the active lens — the number
+   *  a purchasing-power-minded investor actually nets. */
+  const scenarioRealMultiple = realTerms
+    ? scenarioFv / pv
+    : scenarioMultiple;
+  const scenarioRealCagr = realCagr(cagr, realTerms ? inflation : 0);
 
   const toggleSelected = (slug: string) => {
     setSelected((prev) => {
@@ -341,6 +414,8 @@ export function ProjectionsView({
     setHorizon(20);
     setShowScenario(true);
     setDepletionAdjusted(false);
+    setRealTerms(false);
+    setInflation(DEFAULT_INFLATION);
     setScenarioName("");
     setCompareIds([]);
     setSharedNotice(false);
@@ -374,6 +449,8 @@ export function ProjectionsView({
         cagr,
         horizon,
         showScenario,
+        realTerms,
+        inflation,
         savedAt: new Date().toISOString(),
       },
       ...saved,
@@ -394,6 +471,9 @@ export function ProjectionsView({
     setCagr(sc.cagr);
     setHorizon(sc.horizon);
     setShowScenario(sc.showScenario);
+    // Pre-round-10 saves carry no lens fields — they restore as nominal.
+    setRealTerms(sc.realTerms ?? false);
+    setInflation(sc.inflation ?? DEFAULT_INFLATION);
     toast({ title: `Loaded “${sc.name}”`, description: "Inputs restored to the saved hypothesis." });
   };
 
@@ -419,10 +499,18 @@ export function ProjectionsView({
   }, [saved, compareIds]);
 
   const scenarioFvOf = (sc: SavedScenario) =>
-    futureValue(sc.pv, sc.cagr, sc.horizon);
+    sc.realTerms
+      ? realValue(
+          futureValue(sc.pv, sc.cagr, sc.horizon),
+          sc.inflation ?? DEFAULT_INFLATION,
+          sc.horizon
+        )
+      : futureValue(sc.pv, sc.cagr, sc.horizon);
 
   const scenarioMultipleOf = (sc: SavedScenario) =>
-    Math.pow(1 + sc.cagr / 100, sc.horizon);
+    sc.realTerms
+      ? scenarioFvOf(sc) / sc.pv
+      : Math.pow(1 + sc.cagr / 100, sc.horizon);
 
   /** Serialize the current inputs into the address bar and copy the link. */
   const shareScenario = async () => {
@@ -433,6 +521,8 @@ export function ProjectionsView({
       horizon,
       showScenario,
       depletionAdjusted,
+      realTerms,
+      inflation,
     });
     // replaceState keeps the router untouched (no hashchange, no re-mount).
     window.history.replaceState(null, "", hash);
@@ -474,7 +564,7 @@ export function ProjectionsView({
     );
     toast({
       title: "Projection series exported",
-      description: `${series.length} annual snapshots · ${selectedMarkets.length} market${selectedMarkets.length === 1 ? "" : "s"}${showScenario ? " + scenario" : ""}${depletionAdjusted ? " · depletion-adjusted regime" : ""}.`,
+      description: `${series.length} annual snapshots · ${selectedMarkets.length} market${selectedMarkets.length === 1 ? "" : "s"}${showScenario ? " + scenario" : ""}${depletionAdjusted ? " · depletion-adjusted regime" : ""}${realTerms ? ` · real 2026 dollars (deflated ${fmtPct(inflation)}/yr)` : ""}.`,
     });
   };
 
@@ -486,17 +576,36 @@ export function ProjectionsView({
       {backTo && navigate ? (
         <button
           type="button"
-          onClick={() => navigate({ view: backTo })}
+          onClick={() =>
+            navigate(
+              backTo.kind === "submarket"
+                ? { view: "submarket", slug: backTo.slug }
+                : { view: backTo.kind }
+            )
+          }
           className="group mb-3 inline-flex h-7 items-center gap-1.5 rounded-md border bg-card px-2.5 text-[12px] font-medium text-muted-foreground shadow-sm transition-all hover:border-emerald-500/50 hover:text-foreground active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60"
           aria-label={`Back to ${
-            backTo === "overview" ? "the overview workspace" : "the master matrix"
+            backTo.kind === "overview"
+              ? "the overview workspace"
+              : backTo.kind === "matrix"
+                ? "the master matrix"
+                : `the ${
+                    submarkets.find((m) => m.slug === backTo.slug)?.name ?? "market"
+                  } profile`
           }`}
         >
           <ArrowLeft
             className="h-3.5 w-3.5 transition-transform group-hover:-translate-x-0.5"
             aria-hidden
           />
-          Back to {backTo === "overview" ? "overview" : "master matrix"}
+          Back to{" "}
+          {backTo.kind === "overview"
+            ? "overview"
+            : backTo.kind === "matrix"
+              ? "master matrix"
+              : `the ${
+                  submarkets.find((m) => m.slug === backTo.slug)?.name ?? "market"
+                } profile`}
         </button>
       ) : null}
       <SectionHeader
@@ -534,13 +643,24 @@ export function ProjectionsView({
           <p className="flex min-w-0 items-center gap-2">
             <Link2 className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden />
             <span className="truncate">
-              Inputs preset loaded from a{" "}
+              Inputs preset loaded from{" "}
               <span className="font-semibold text-emerald-700 dark:text-emerald-300">
-                scenario link
+                {backTo?.kind === "overview"
+                  ? "an overview KPI drilldown"
+                  : backTo?.kind === "matrix"
+                    ? backTo.via === "compare"
+                      ? "the matrix quick-compare panel"
+                      : "the matrix pinned set"
+                    : backTo?.kind === "submarket"
+                      ? `the ${
+                          submarkets.find((m) => m.slug === backTo.slug)?.name ?? "market"
+                        } profile`
+                      : "a scenario link"}
               </span>{" "}
               — {selectedMarkets.length} market
               {selectedMarkets.length === 1 ? "" : "s"} · {fmtCurrency(pv, { compact: true })} ·{" "}
-              {fmtPct(cagr)} · {horizon} yrs.
+              {fmtPct(cagr)} · {horizon} yrs
+              {realTerms ? ` · real 2026 $ (${fmtPct(inflation)} deflator)` : ""}.
             </span>
           </p>
           <button
@@ -723,6 +843,73 @@ export function ProjectionsView({
                 nothing remains to entitle.
               </p>
             ) : null}
+
+            {/* Round 10 — real-terms lens toggle + deflator slider. */}
+            <button
+              type="button"
+              onClick={() => setRealTerms((v) => !v)}
+              aria-pressed={realTerms}
+              className={cn(
+                "flex w-full items-center justify-between rounded-lg border p-3 text-left text-[13px] font-medium transition-colors",
+                realTerms
+                  ? "border-violet-500/50 bg-violet-500/[0.08]"
+                  : "bg-background"
+              )}
+            >
+              <span className="flex items-center gap-2">
+                <Coins
+                  className={cn(
+                    "h-4 w-4",
+                    realTerms ? "text-violet-600 dark:text-violet-400" : "text-muted-foreground"
+                  )}
+                  aria-hidden
+                />
+                Real 2026 dollars
+              </span>
+              <span
+                className={cn(
+                  "text-[11px] uppercase tracking-wider",
+                  realTerms
+                    ? "font-semibold text-violet-600 dark:text-violet-400"
+                    : "text-muted-foreground"
+                )}
+              >
+                {realTerms ? "On" : "Off"}
+              </span>
+            </button>
+            {realTerms ? (
+              <div className="space-y-2.5">
+                <div>
+                  <div className="mb-2 flex items-baseline justify-between">
+                    <label htmlFor="proj-inflation" className="text-[13px] text-muted-foreground">
+                      Inflation assumption · i
+                    </label>
+                    <span className="text-sm font-semibold tabular-nums text-violet-600 dark:text-violet-400">
+                      {fmtPct(inflation)}
+                    </span>
+                  </div>
+                  <Slider
+                    id="proj-inflation"
+                    value={[inflation]}
+                    onValueChange={(v) => setInflation(v[0])}
+                    min={1.5}
+                    max={4}
+                    step={0.1}
+                    aria-label="Annual inflation assumption"
+                  />
+                </div>
+                <p className="rounded-md border border-violet-500/25 bg-violet-500/[0.05] p-2.5 text-[11.5px] leading-relaxed text-muted-foreground">
+                  Every curve is deflated back into 2026 purchasing power at{" "}
+                  <span className="font-semibold">{fmtPct(inflation)}/yr</span>{" "}
+                  — the real CAGR of a {fmtPct(cagr)} nominal run is{" "}
+                  <span className="font-semibold text-violet-600 dark:text-violet-400">
+                    {fmtPct(scenarioRealCagr)}
+                  </span>
+                  . Scarcity still wins in real terms; it just wins more
+                  slowly than the headline number suggests.
+                </p>
+              </div>
+            ) : null}
           </div>
 
           {/* Live formula */}
@@ -743,25 +930,33 @@ export function ProjectionsView({
                 FV = {fmtCurrency(pv, { compact: true })} · (1 +{" "}
                 {(cagr / 100).toFixed(3)})<sup>{horizon}</sup>
               </p>
+              {realTerms ? (
+                <p className="text-muted-foreground">
+                  Real FV = FV / (1 + {(inflation / 100).toFixed(3)})<sup>{horizon}</sup>
+                </p>
+              ) : null}
               <p className="font-semibold text-emerald-600 dark:text-emerald-400">
-                FV = {fmtCurrency(scenarioFv, { compact: true })}
+                {realTerms ? "Real FV" : "FV"} ={" "}
+                {fmtCurrency(scenarioFv, { compact: true })}
               </p>
             </div>
             <div className="mt-3 grid grid-cols-2 gap-2 text-center">
               <div className="rounded-lg bg-muted/60 p-2.5">
                 <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                  Multiple
+                  {realTerms ? "Real multiple" : "Multiple"}
                 </p>
                 <p className="mt-0.5 text-sm font-semibold tabular-nums">
-                  {scenarioMultiple.toFixed(2)}×
+                  {scenarioRealMultiple.toFixed(2)}×
                 </p>
               </div>
               <div className="rounded-lg bg-muted/60 p-2.5">
                 <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                  Avg gain / yr
+                  {realTerms ? "Real CAGR" : "Avg gain / yr"}
                 </p>
                 <p className="mt-0.5 text-sm font-semibold tabular-nums">
-                  {fmtCurrency((scenarioFv - pv) / horizon, { compact: true })}
+                  {realTerms
+                    ? fmtPct(scenarioRealCagr)
+                    : fmtCurrency((scenarioFv - pv) / horizon, { compact: true })}
                 </p>
               </div>
             </div>
@@ -865,6 +1060,16 @@ export function ProjectionsView({
                           {fmtCurrency(sc.pv, { compact: true })} · {fmtPct(sc.cagr)} ·{" "}
                           {sc.horizon} yrs · {sc.selected.length} market
                           {sc.selected.length === 1 ? "" : "s"}
+                          {sc.realTerms ? (
+                            <span
+                              className="ml-1 rounded-sm border border-violet-500/30 bg-violet-500/10 px-1 py-px text-[9.5px] font-semibold text-violet-700 dark:text-violet-300"
+                              title={`Deflated to 2026 dollars at ${fmtPct(
+                                sc.inflation ?? DEFAULT_INFLATION
+                              )}/yr`}
+                            >
+                              2026$
+                            </span>
+                          ) : null}
                         </p>
                       </li>
                     );
@@ -951,6 +1156,16 @@ export function ProjectionsView({
                               {fmtCurrency(sc.pv, { compact: true })} ·{" "}
                               {fmtPct(sc.cagr)} · {sc.horizon} yrs ·{" "}
                               {scenarioMultipleOf(sc).toFixed(2)}×
+                              {sc.realTerms ? (
+                                <span
+                                  className="ml-1 rounded-sm border border-violet-500/30 bg-violet-500/10 px-1 py-px text-[9.5px] font-semibold text-violet-700 dark:text-violet-300"
+                                  title={`Deflated to 2026 dollars at ${fmtPct(
+                                    sc.inflation ?? DEFAULT_INFLATION
+                                  )}/yr`}
+                                >
+                                  2026$
+                                </span>
+                              ) : null}
                             </p>
                           </div>
                         );
@@ -993,6 +1208,12 @@ export function ProjectionsView({
                   <span className="inline-flex items-center gap-1 rounded-sm border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-widest text-amber-700 dark:text-amber-300">
                     <Flame className="h-3 w-3" aria-hidden />
                     Depletion-adjusted · {fmtPct(POST_DEPLETION_CAGR)} post
+                  </span>
+                ) : null}
+                {realTerms ? (
+                  <span className="inline-flex items-center gap-1 rounded-sm border border-violet-500/40 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-widest text-violet-700 dark:text-violet-300">
+                    <Coins className="h-3 w-3" aria-hidden />
+                    Real 2026 $ · {fmtPct(inflation)} deflator
                   </span>
                 ) : null}
               </div>
@@ -1073,7 +1294,7 @@ export function ProjectionsView({
                     const nDepletion = s.depletionYear - START_YEAR;
                     const depletionValue =
                       nDepletion >= 0 && nDepletion <= horizon
-                        ? marketValue(s, nDepletion)
+                        ? displayValue(marketValue(s, nDepletion), nDepletion)
                         : null;
                     return depletionValue !== null ? (
                       <ReferenceDot
@@ -1156,7 +1377,7 @@ export function ProjectionsView({
           {/* Per-market outcome cards */}
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {selectedMarkets.map((s, i) => {
-              const fv = marketValue(s, horizon);
+              const fv = displayValue(marketValue(s, horizon), horizon);
               const multiple = fv / s.baselinePrice2026;
               const color = PALETTE[i % PALETTE.length];
               const implied = impliedCagr(s.baselinePrice2026, fv, horizon);
@@ -1172,7 +1393,16 @@ export function ProjectionsView({
                       <StateBadge state={s.state} />
                     </p>
                     <CagrBadge
-                      cagr={depletionAdjusted ? implied : s.projectedCagr}
+                      cagr={
+                        realTerms
+                          ? realCagr(
+                              depletionAdjusted ? implied : s.projectedCagr,
+                              inflation
+                            )
+                          : depletionAdjusted
+                            ? implied
+                            : s.projectedCagr
+                      }
                       showTier={false}
                     />
                   </div>
@@ -1188,6 +1418,14 @@ export function ProjectionsView({
                     <span className="inline-flex items-center gap-1">
                       <TrendingUp className="h-3 w-3" aria-hidden />
                       {multiple.toFixed(2)}× over {horizon} yrs
+                      {realTerms ? (
+                        <span
+                          className="ml-1 rounded-sm border border-violet-500/30 bg-violet-500/10 px-1 py-px text-[10px] font-semibold text-violet-700 dark:text-violet-300"
+                          title={`Deflated to 2026 dollars at ${fmtPct(inflation)}/yr`}
+                        >
+                          2026$
+                        </span>
+                      ) : null}
                       {depletionAdjusted ? (
                         <span
                           className="ml-1 rounded-sm border border-amber-500/30 bg-amber-500/10 px-1 py-px text-[10px] font-semibold text-amber-700 dark:text-amber-300"
@@ -1209,7 +1447,14 @@ export function ProjectionsView({
       {/* Underlying series table */}
       <div className="mt-6 overflow-x-auto rounded-xl border bg-card shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
-          <MicroLabel>Underlying Series · Annual Snapshots</MicroLabel>
+          <MicroLabel>
+            Underlying Series · Annual Snapshots
+            {realTerms ? (
+              <span className="ml-2 rounded-sm border border-violet-500/40 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-widest text-violet-700 dark:text-violet-300">
+                2026 dollars
+              </span>
+            ) : null}
+          </MicroLabel>
           <button
             type="button"
             onClick={exportSeriesCsv}

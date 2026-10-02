@@ -68,6 +68,19 @@ function MethodologyBody() {
           conservative case where scarcity pricing flattens once nothing
           remains to entitle.
         </p>
+        <p>
+          <strong className="text-foreground">Real 2026 dollars (round 10):</strong>{" "}
+          the real-terms lens deflates every curve back into start-year
+          purchasing power at the configurable inflation assumption:
+        </p>
+        <Formula>Real FV = FV / (1 + i)ⁿ · real r = (1 + r)/(1 + i) − 1</Formula>
+        <p>
+          A 4.7% nominal run at a 2.5% deflator is a 2.1% real run — the
+          lens composes with the depletion regime (the nominal path is
+          computed first, then deflated), and it rides through saved
+          scenarios and share links as the <span className="font-mono">v</span>/
+          <span className="font-mono">i</span> hash params.
+        </p>
       </Section>
 
       <Section title="2 · Financing math">

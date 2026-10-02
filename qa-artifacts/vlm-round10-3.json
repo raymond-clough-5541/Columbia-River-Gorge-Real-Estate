@@ -1,0 +1,28 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "1) **PASS**: The violet 'Real 2026 dollars' toggle renders correctly with a clear 'ON' state, distinct icon, and consistent background color.\n2) **PASS**: The inflation slider and its 2.5% percentage label are horizontally aligned and clearly associated with the 'Inflation assumption' label.\n3) **PASS**: The violet note text is highly legible in light mode with excellent contrast against the light purple background and clear dark typography.\n4) **PASS**: The 'Live Formula' card and its contents are cleanly rendered with no overlapping elements or visual clutter.\n5) **PASS**: No other visual defects found; the left controls column maintains professional spacing, alignment, and hierarchy.",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": 1790922305,
+  "id": "202610021425025d7808c9d0dd4f7b",
+  "model": "glm-5v-turbo",
+  "object": "chat.completion",
+  "request_id": "202610021425025d7808c9d0dd4f7b",
+  "usage": {
+    "completion_tokens": 144,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "prompt_tokens": 1837,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "total_tokens": 1981
+  }
+}

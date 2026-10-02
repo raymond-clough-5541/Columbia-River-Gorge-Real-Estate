@@ -256,11 +256,16 @@ html {
     background: transparent !important;
   }
 
-  /* Otherwise hide app chrome: nav, footer, floating + sticky controls. */
+  /* Otherwise hide app chrome: nav, footer, floating + sticky controls.
+     Round 10: the quick-compare floating panel joins the hidden set —
+     it's fixed-position session chrome, not report content. (No blanket
+     .fixed rule: Radix dialog content is itself fixed-position and must
+     keep printing for open dossiers.) */
   header,
   footer,
   nav,
   [aria-label="Back to top"],
+  [aria-label="Quick compare"],
   [data-print="hide"],
   .sticky {
     display: none !important;

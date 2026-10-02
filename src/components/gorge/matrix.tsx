@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import {
   ArrowDown,
   ArrowRight,
@@ -12,11 +13,14 @@ import {
   Droplets,
   ExternalLink,
   Flame,
+  GitCompareArrows,
   Link2,
   Pin,
   PinOff,
   Recycle,
   ShieldAlert,
+  TrendingUp,
+  X,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -111,6 +115,13 @@ const DEFAULT_VISIBLE: Record<ColumnKey, boolean> = {
 /** Row-pinning cap — three jurisdictions above the fold. */
 const MAX_PINS = 3;
 
+/** Quick-compare cap (round 10) — same three-slot budget as pins and
+ *  what-ifs, so every comparison surface on the platform reads the same. */
+const MAX_COMPARE = 3;
+/** Per-column bar tints — mirrors the projections curve palette so a
+ *  market keeps its visual identity across workspaces. */
+const COMPARE_COLORS = ["#0d9488", "#f59e0b", "#64748b"];
+
 /** Session-scoped pin persistence — survives the "Model the pinned set →
  *  ← Back to master matrix" round trip (view unmounts mid-loop). MatrixView
  *  only mounts post-hydration (the hash router serves the overview server
@@ -158,6 +169,29 @@ export function MatrixView({
   const [visibleCols, setVisibleCols] =
     useState<Record<ColumnKey, boolean>>(DEFAULT_VISIBLE);
   const [pins, setPins] = useState<string[]>(readPins);
+
+  /* ---------------- Quick-compare (round 10) ----------------
+   * Up to three rows, FIFO eviction — the fourth pick silently replaces
+   * the oldest so exploring never hits a modal toast. The floating panel
+   * mounts with the first pick (a one-market bar readout is still useful
+   * for scale) and grows to the full side-by-side at two and three. */
+  const [compareSlugs, setCompareSlugs] = useState<string[]>([]);
+
+  const toggleCompare = (slug: string) => {
+    setCompareSlugs((prev) =>
+      prev.includes(slug)
+        ? prev.filter((s) => s !== slug)
+        : [...prev, slug].slice(-MAX_COMPARE)
+    );
+  };
+
+  const compareMarkets = useMemo(
+    () =>
+      compareSlugs
+        .map((slug) => submarkets.find((s) => s.slug === slug))
+        .filter((s): s is Submarket => Boolean(s)),
+    [compareSlugs, submarkets]
+  );
 
   // Mirror pins into sessionStorage so the "Model the pinned set → back"
   // round trip keeps the shortlist alive for the whole session.
@@ -703,6 +737,8 @@ export function MatrixView({
               const isActive = detailSlug === s.slug;
               const pinned = pins.includes(s.slug);
               const pinRank = pins.indexOf(s.slug) + 1;
+              const comparing = compareSlugs.includes(s.slug);
+              const compareRank = compareSlugs.indexOf(s.slug) + 1;
               return (
                 <TableRow
                   key={s.slug}
@@ -727,6 +763,36 @@ export function MatrixView({
                       ) : null}
                       <span className="text-[14px] font-semibold">{s.name}</span>
                       <StateBadge state={s.state} />
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleCompare(s.slug);
+                        }}
+                        aria-pressed={comparing}
+                        aria-label={
+                          comparing
+                            ? `Remove ${s.name} from quick compare`
+                            : `Add ${s.name} to quick compare`
+                        }
+                        title={
+                          comparing
+                            ? `Compared #${compareRank} — click to remove`
+                            : "Add to the quick-compare panel"
+                        }
+                        className={cn(
+                          "ml-auto inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-all active:scale-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60",
+                          comparing
+                            ? "bg-emerald-500/15 text-emerald-600 hover:bg-emerald-500/25 dark:text-emerald-400"
+                            : "text-muted-foreground/50 hover:bg-muted hover:text-emerald-600 dark:hover:text-emerald-400"
+                        )}
+                      >
+                        <GitCompareArrows
+                          className="h-3.5 w-3.5"
+                          fill={comparing ? "currentColor" : "none"}
+                          aria-hidden
+                        />
+                      </button>
                       <button
                         type="button"
                         onClick={(e) => {
@@ -833,6 +899,232 @@ export function MatrixView({
           </TableBody>
         </Table>
       </div>
+
+      {/* Keep the last table rows scrollable past the floating panel. */}
+      {compareMarkets.length > 0 ? (
+        <div className="h-56" aria-hidden />
+      ) : null}
+
+      {/* ---------------- Quick-compare floating panel (round 10) ----------
+       * Side-by-side relative positioning for up to three rows — bars are
+       * normalized to the selection's max (depletion: runway share), with
+       * per-metric leader tags where the investor direction is unambiguous.
+       * Centered via a flex wrapper so framer-motion's transform animation
+       * never fights a Tailwind -translate-x centering utility. */}
+      <AnimatePresence>
+        {compareMarkets.length > 0 ? (
+          <motion.div
+            initial={{ opacity: 0, y: 28 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 28 }}
+            transition={{ duration: 0.22, ease: "easeOut" }}
+            className="pointer-events-none fixed inset-x-0 bottom-5 z-40 flex justify-center px-4 pb-[env(safe-area-inset-bottom)]"
+          >
+            <aside
+              role="region"
+              aria-label="Quick compare"
+              className="pointer-events-auto w-full max-w-3xl rounded-2xl border bg-popover/95 p-4 shadow-xl backdrop-blur-md"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  <GitCompareArrows className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" aria-hidden />
+                  Quick compare
+                  <span className="ml-1 rounded-full bg-muted px-1.5 py-px text-[10px] font-medium tabular-nums">
+                    {compareMarkets.length} of {MAX_COMPARE}
+                  </span>
+                  {compareMarkets.length === 1 ? (
+                    <span className="font-normal normal-case tracking-normal">
+                      — add a second market for the side-by-side
+                    </span>
+                  ) : null}
+                </p>
+                <div className="flex items-center gap-1.5">
+                  {compareMarkets.length >= 2 ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        // Same breadcrumb contract as the pinned-set CTA,
+                        // tagged "compare" so the target's preset notice can
+                        // name the quick-compare panel as the origin.
+                        try {
+                          sessionStorage.setItem("crgnsa-drill-from", "matrix-compare");
+                        } catch {
+                          /* storage unavailable — no back-link */
+                        }
+                        navigate({
+                          view: "projections",
+                          query: `m=${compareSlugs.join(",")}&s=1`,
+                        });
+                      }}
+                      title="Open the Projections workspace with this compared set preloaded"
+                      className="inline-flex h-7 items-center gap-1.5 rounded-md border border-emerald-500/50 bg-emerald-500/10 px-2.5 text-[12px] font-medium text-emerald-700 transition-all hover:bg-emerald-500/20 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60 dark:text-emerald-300"
+                    >
+                      <TrendingUp className="h-3.5 w-3.5" aria-hidden />
+                      Model this set
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => setCompareSlugs([])}
+                    aria-label="Clear quick compare"
+                    title="Clear the comparison"
+                    className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60"
+                  >
+                    <X className="h-3.5 w-3.5" aria-hidden />
+                  </button>
+                </div>
+              </div>
+
+              <div
+                className="mt-3 grid gap-x-3 gap-y-2.5"
+                style={{
+                  gridTemplateColumns: `72px repeat(${compareMarkets.length}, minmax(0, 1fr))`,
+                }}
+              >
+                {/* Column headers — market identity + remove */}
+                <div aria-hidden />
+                {compareMarkets.map((m, i) => (
+                  <div key={m.slug} className="min-w-0">
+                    <p className="flex items-center gap-1.5 truncate text-[12.5px] font-semibold">
+                      <span
+                        className="h-2 w-2 shrink-0 rounded-full"
+                        style={{ backgroundColor: COMPARE_COLORS[i % COMPARE_COLORS.length] }}
+                        aria-hidden
+                      />
+                      <span className="truncate">{m.name}</span>
+                      <StateBadge state={m.state} />
+                      <button
+                        type="button"
+                        onClick={() => toggleCompare(m.slug)}
+                        aria-label={`Remove ${m.name} from quick compare`}
+                        title="Remove from comparison"
+                        className="ml-auto flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
+                      >
+                        <X className="h-3 w-3" aria-hidden />
+                      </button>
+                    </p>
+                  </div>
+                ))}
+
+                {/* Metric rows — bar width = value / max of the selection. */}
+                {(() => {
+                  const mid = (s: Submarket) =>
+                    (s.netBuildableAcresMin + s.netBuildableAcresMax) / 2;
+                  const forecastMid = (s: Submarket) =>
+                    (s.projectedPrice2046Min + s.projectedPrice2046Max) / 2;
+                  const runway = (s: Submarket) => s.depletionYear - 2026;
+                  const rows: {
+                    label: string;
+                    value: (s: Submarket) => string;
+                    raw: (s: Submarket) => number;
+                    winner: "max" | "min" | null;
+                    tag?: string;
+                    title?: string;
+                  }[] = [
+                    {
+                      label: "Baseline",
+                      value: (s) => fmtCurrency(s.baselinePrice2026, { compact: true }),
+                      raw: (s) => s.baselinePrice2026,
+                      winner: null,
+                    },
+                    {
+                      label: "20-yr CAGR",
+                      value: (s) => fmtPct(s.projectedCagr),
+                      raw: (s) => s.projectedCagr,
+                      winner: "max",
+                      tag: "leads",
+                      title: "Highest projected appreciation in the selection",
+                    },
+                    {
+                      label: "Net buildable",
+                      value: (s) => fmtAcres(Math.round(mid(s))),
+                      raw: mid,
+                      winner: null,
+                    },
+                    {
+                      label: "2046 f'cast",
+                      value: (s) => fmtCurrency(Math.round(forecastMid(s)), { compact: true }),
+                      raw: forecastMid,
+                      winner: "max",
+                      tag: "leads",
+                      title: "Highest 2046 projected value (band midpoint)",
+                    },
+                    {
+                      label: "Runway",
+                      value: (s) => `${runway(s)} yrs · ${s.depletionYear}`,
+                      raw: runway,
+                      winner: "max",
+                      tag: "longest",
+                      title: "Latest raw-land depletion in the selection",
+                    },
+                  ];
+                  return rows.map((metric) => {
+                    const raws = compareMarkets.map(metric.raw);
+                    const max = Math.max(...raws);
+                    const min = Math.min(...raws);
+                    const winnerIdx =
+                      metric.winner === "max"
+                        ? raws.indexOf(max)
+                        : metric.winner === "min"
+                          ? raws.indexOf(min)
+                          : -1;
+                    return (
+                      <div key={metric.label} className="contents">
+                        <p
+                          className="self-center text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground"
+                          title={metric.title ?? metric.label}
+                        >
+                          {metric.label}
+                        </p>
+                        {compareMarkets.map((m, i) => {
+                          const pct = max > 0 ? (metric.raw(m) / max) * 100 : 0;
+                          const isWinner = i === winnerIdx && compareMarkets.length > 1;
+                          return (
+                            <div key={m.slug} className="min-w-0">
+                              <p
+                                className={cn(
+                                  "truncate text-[12.5px] font-semibold tabular-nums",
+                                  isWinner && "text-emerald-600 dark:text-emerald-400"
+                                )}
+                              >
+                                {metric.value(m)}
+                                {isWinner ? (
+                                  <span
+                                    className="ml-1.5 rounded-sm border border-emerald-500/30 bg-emerald-500/10 px-1 py-px text-[9.5px] font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300"
+                                    title={metric.title}
+                                  >
+                                    {metric.tag}
+                                  </span>
+                                ) : null}
+                              </p>
+                              <div className="mt-1 h-1 overflow-hidden rounded-full bg-muted">
+                                <div
+                                  className="h-full rounded-full transition-[width] duration-300"
+                                  style={{
+                                    width: `${pct}%`,
+                                    backgroundColor: COMPARE_COLORS[i % COMPARE_COLORS.length],
+                                    opacity: isWinner ? 1 : 0.75,
+                                  }}
+                                  aria-hidden
+                                />
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  });
+                })()}
+              </div>
+
+              <p className="mt-2.5 text-[10.5px] leading-snug text-muted-foreground">
+                Bars scale to the selection&apos;s maximum · a fourth pick replaces
+                the oldest · {compareMarkets.length >= 2 ? "“leads”/“longest” tag the per-metric winner" : "winner tags appear with a second market"}.
+              </p>
+            </aside>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
 
       {/* Infrastructure dossier drawer */}
       <Sheet

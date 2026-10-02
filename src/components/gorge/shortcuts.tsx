@@ -89,9 +89,12 @@ export function KeyboardShortcuts({
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (isTypingTarget(e.target)) return;
+      // e.key is undefined on some synthetic/IME/dead-key events — normalize
+      // once so no downstream toLowerCase() can throw.
+      const key = e.key ?? "";
 
       // "?" opens the reference sheet.
-      if (e.key === "?") {
+      if (key === "?") {
         e.preventDefault();
         onHelpOpenChange(true);
         disarm();
@@ -99,7 +102,7 @@ export function KeyboardShortcuts({
       }
 
       // "/" jumps to the listings search field.
-      if (e.key === "/") {
+      if (key === "/") {
         e.preventDefault();
         disarm();
         navigate({ view: "listings" });
@@ -112,7 +115,7 @@ export function KeyboardShortcuts({
       }
 
       if (pending) {
-        const target = SEQUENCE_TARGETS[e.key.toLowerCase()];
+        const target = SEQUENCE_TARGETS[key.toLowerCase()];
         if (target) {
           e.preventDefault();
           navigate(target.route);
@@ -121,14 +124,14 @@ export function KeyboardShortcuts({
         return;
       }
 
-      if (e.key.toLowerCase() === "g") {
+      if (key.toLowerCase() === "g") {
         e.preventDefault();
         armPending();
         return;
       }
 
       // "t" toggles the theme.
-      if (e.key.toLowerCase() === "t") {
+      if (key.toLowerCase() === "t") {
         e.preventDefault();
         setTheme(resolvedTheme === "dark" ? "light" : "dark");
       }

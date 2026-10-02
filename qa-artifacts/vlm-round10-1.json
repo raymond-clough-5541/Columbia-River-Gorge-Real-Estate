@@ -1,0 +1,28 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "1. **PASS** – All text, including long market names and metric values, is fully contained within its respective container without any clipping or overflow.\n2. **PASS** – The horizontal metric bars are cleanly rendered with distinct color tints and are precisely aligned to their corresponding numerical values.\n3. **PASS** – The 'LEADS' and 'LONGEST' winner tags are clearly legible, properly spaced, and do not collide with the adjacent numerical data.\n4. **PASS** – The header row displays all three market names, state badges (OR/WA), and remove (X) buttons in a highly readable and well-organized layout.\n5. **PASS** – The UI exhibits high overall polish with consistent typography, clear visual hierarchy, and professional alignment across the entire floating panel.",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": 1790922270,
+  "id": "202610021424262db754d8e0df4e09",
+  "model": "glm-5v-turbo",
+  "object": "chat.completion",
+  "request_id": "202610021424262db754d8e0df4e09",
+  "usage": {
+    "completion_tokens": 162,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "prompt_tokens": 1787,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "total_tokens": 1949
+  }
+}

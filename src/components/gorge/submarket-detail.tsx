@@ -127,6 +127,26 @@ export function SubmarketDetailView({
     ? (submarkets.find((s) => s.slug === backToSlug) ?? null)
     : null;
 
+  /** "Model in Projections" (round 10 — completes the round-9 roadmap):
+   *  hands this market to the projections workspace as a preset — the
+   *  market selected, the scenario pencil pre-loaded at its own baseline
+   *  and CAGR so the first slider drag diverges visibly — and stamps a
+   *  drill flag so the target can offer a one-click return, mirroring
+   *  the overview/matrix drilldown contract. */
+  const modelInProjections = () => {
+    if (!market) return;
+    try {
+      sessionStorage.setItem("crgnsa-drill-from", `submarket:${slug}`);
+    } catch {
+      /* storage unavailable — no back-link on the target */
+    }
+    const pv = Math.round(market.baselinePrice2026 / 5000) * 5000;
+    navigate({
+      view: "projections",
+      query: `m=${slug}&pv=${pv}&r=${market.projectedCagr.toFixed(1)}&n=20&s=1&d=0`,
+    });
+  };
+
   const corridorCagr = useMemo(
     () =>
       submarkets.length > 0
@@ -283,6 +303,16 @@ export function SubmarketDetailView({
                 <span className="h-0.5 w-4 bg-zinc-400" aria-hidden />
                 Corridor mean
               </span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={modelInProjections}
+                title={`Open the projections workspace with ${market.name} preloaded — scenario pencil set to its baseline and CAGR`}
+                className="mt-1.5 h-7 gap-1.5 px-2.5 text-[11.5px] font-medium transition-all hover:border-emerald-500/50 hover:text-emerald-700 hover:dark:text-emerald-300 active:scale-[0.97]"
+              >
+                <TrendingUp className="h-3.5 w-3.5" aria-hidden />
+                Model in Projections
+              </Button>
             </div>
           </div>
           <div className="h-[340px] w-full">

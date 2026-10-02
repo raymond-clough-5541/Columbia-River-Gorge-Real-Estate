@@ -1,0 +1,28 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "1. PASS: The panel is contained within the 390px viewport with no horizontal overflow or clipping.\n2. PASS: All three market columns (Hood River OR, Mosier OR, Dallesport WA) are readable with their respective data bars.\n3. PASS: Metric labels are fully visible; while some values are truncated with ellipses, the labels themselves do not wrap or clip.\n4. PASS: The 'Model this set' button is clearly visible, reachable, and not overlapped by other elements.\n5. FAIL: The bottom of the 'Quick compare' panel overlaps and obscures the top portion of the underlying table content.",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": 1790922311,
+  "id": "2026100214250984fed1431b934ba7",
+  "model": "glm-5v-turbo",
+  "object": "chat.completion",
+  "request_id": "2026100214250984fed1431b934ba7",
+  "usage": {
+    "completion_tokens": 134,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "prompt_tokens": 540,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "total_tokens": 674
+  }
+}
