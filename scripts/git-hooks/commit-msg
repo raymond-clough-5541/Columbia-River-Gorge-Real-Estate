@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# commit-msg — the stage-2 message gate for THIS repo (lean port).
+#
+# The source repo's full methodology attestation gate (approval/scope/battery
+# tokens via scripts/enforce-methodology.sh) was NOT ported — this is the
+# portable hygiene subset: every commit gets a real, specific subject line.
+#
+# git invokes commit-msg with the message file as $1 — the only stage where
+# the message reliably exists (git 2.47 `commit -m` writes COMMIT_EDITMSG only
+# AFTER pre-commit succeeds; message checks at pre-commit time read a stale
+# message — incident M26 in the source repo).
+#
+# Allowed shapes:
+#   · "Round N: <summary>"            — round-closing commits (convention)
+#   · "feat|fix|docs|chore|qa|merge: …" — conventional prefixes
+#   · "checkpoint: …"/"auto-commit: …" — the WIP daemon's messages
+#   · "Merge …"                        — merge commits
+# Blocked: empty, < 12 chars, > 100 chars, generic one-worders (wip/update/fix…).
+#
+# Bypass (emergency): git commit --no-verify
+set -uo pipefail
+
+MSG_FILE="${1:-}"
+
+# First non-empty, non-comment line = the subject.
+SUBJECT=""
+while IFS= read -r line; do
+  case "$line" in
+    ''|'#'*) continue ;;
+    *) SUBJECT="$line"; break ;;
+  esac
+done < "$MSG_FILE"
+
+TRIMMED=$(printf '%s' "$SUBJECT" | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
+LEN=${#TRIMMED}
+
+fail() {
+  echo "✗ commit-msg gate: $1"
+  echo "  subject was: '${TRIMMED}'"
+  echo ""
+  echo "  Convention: \"Round N: what shipped\" or \"feat|fix|docs|chore: summary\""
+  echo "  (specific + present tense; the worklog entry carries the detail)."
+  echo "  Emergencies: git commit --no-verify (leaves a reflog record)."
+  exit 1
+}
+
+[ "$LEN" -gt 0 ]    || fail "subject line is empty"
+[ "$LEN" -ge 12 ]   || fail "subject too short (${LEN} chars) — say what the commit does"
+[ "$LEN" -le 100 ]  || fail "subject too long (${LEN} chars) — move detail to the body"
+
+# Merge commits and the daemon's auto-saves are exempt from the generic list.
+case "$TRIMMED" in
+  "Merge "*|"merge: "*|"checkpoint: "*|"auto-commit: "*|"Revert "*)
+    exit 0 ;;
+esac
+
+GENERIC="^(wip|wip\.|update|updates|updated|fix|fixes|fixed|fix stuff|changes|change|misc|stuff|test|tests|asdf|todo|cleanup|clean up|minor|tweak|adjust|improve|improvements|final|final fix|quick fix|push|commit|save|work|it works|done)$"
+if printf '%s' "$TRIMMED" | grep -qiE "$GENERIC"; then
+  fail "generic subject — every commit deserves a specific one-liner"
+fi
+
+exit 0

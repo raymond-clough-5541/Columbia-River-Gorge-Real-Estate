@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# pre-commit-lint — fast ESLint pass over STAGED .ts/.tsx/.js/.jsx files only.
+#
+# Why staged-only: the full `bun run lint` walks the whole tree; the commit
+# gate only needs the files actually entering the commit. `--cache` makes
+# repeat commits near-instant (.eslintcache is gitignored).
+#
+# Bypass (emergency): git commit --no-verify
+# Disable just this sub-hook: NO_LINT_HOOK=1
+set -uo pipefail
+
+if [ "${NO_LINT_HOOK:-0}" = "1" ]; then
+  exit 0
+fi
+
+# Staged (added/copied/modified) source files only — never deleted files.
+# NOTE: repo paths contain no spaces; if that ever changes switch to -z/xargs -0.
+STAGED=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null \
+  | grep -E '\.(ts|tsx|js|jsx|mjs|cjs)$' \
+  | grep -vE '^node_modules/|^\.next/' || true)
+
+if [ -z "$STAGED" ]; then
+  exit 0
+fi
+
+echo "▸ eslint: staged gate ($(echo "$STAGED" | wc -l | tr -d ' ') file(s))"
+bunx eslint --cache --cache-location .eslintcache $STAGED
+RC=$?
+
+if [ "$RC" -ne 0 ]; then
+  echo ""
+  echo "✗ eslint gate FAILED — fix the errors above, or:"
+  echo "  · stage the fixes and retry the commit"
+  echo "  · emergencies only: git commit --no-verify (leaves a reflog record)"
+fi
+exit $RC

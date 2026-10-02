@@ -1,0 +1,21 @@
+# gitleaks configuration — respects the repo's DELIBERATE credential carriers.
+#
+# The R94 owner-directed pattern: this PRIVATE repo embeds the GitHub PAT in
+# exactly two committed files so any fresh sandbox can redeploy from GitHub
+# alone (see docs/REDEPLOY.md "The self-healing PAT"). gitleaks would flag
+# them on every scan; they are allowlisted here — and ONLY here.
+#
+# ⚠ BEFORE making this repo public: remove the PAT from both files, rotate
+# the token on GitHub, delete this allowlist, and rely on
+# upload/GITHUB-PAT.txt (gitignored) instead.
+title = "gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Deliberate PAT carriers for the private-repo redeploy contract"
+paths = [
+    '''scripts/redeploy\.sh''',
+    '''docs/REDEPLOY-PROMPT\.md''',
+]

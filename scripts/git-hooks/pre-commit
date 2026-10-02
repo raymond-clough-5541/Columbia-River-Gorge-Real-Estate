@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# pre-commit — the wrapper gate: runs every scripts/git-hooks/pre-commit-*
+# sub-hook in alphabetical order. If ANY sub-hook exits non-zero, the commit
+# is blocked (all failures are shown, not just the first).
+#
+# Armed by scripts/setup-git-hooks.sh via `git config core.hooksPath
+# scripts/git-hooks` — the hooks live INSIDE the repo (tracked in git), so a
+# work-tree restore keeps them alive; only .git/config can lose the pointer,
+# which `bun install` (package.json "prepare") and scripts/redeploy.sh re-arm.
+#
+# To add a new pre-commit check:
+#   1. Write scripts/git-hooks/pre-commit-<name> (executable bash).
+#   2. Commit it — the wrapper picks it up on the next commit automatically.
+#
+# To bypass ALL pre-commit hooks (emergency only — leaves a reflog record):
+#   git commit --no-verify
+set -uo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+HOOKS_DIR="$ROOT/scripts/git-hooks"
+
+HOOKS=$(ls "$HOOKS_DIR"/pre-commit-* 2>/dev/null | sort || true)
+
+if [ -z "$HOOKS" ]; then
+  # No pre-commit sub-hooks configured — don't block the commit.
+  exit 0
+fi
+
+FAILED=0
+for hook in $HOOKS; do
+  [ -x "$hook" ] || continue
+  if ! bash "$hook"; then
+    FAILED=1
+  fi
+done
+
+exit $FAILED

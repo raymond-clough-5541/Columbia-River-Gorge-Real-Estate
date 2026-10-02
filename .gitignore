@@ -52,3 +52,13 @@ prompt
 server.log
 # Skills directory
 /skills/
+
+# zai-redeploy-kit runtime artifacts (never commit)
+upload/
+logs/
+.auto-commit.pid
+.eslintcache
+.audit-skills/
+
+# audit scratch output (reports belong in docs/audits/ — committed)
+.audit-out/

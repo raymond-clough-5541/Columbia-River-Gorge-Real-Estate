@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+# pre-commit-gitleaks — secret scan of STAGED changes (defense-in-depth).
+#
+# Strategy:
+#   1. If `gitleaks` is on $PATH: `gitleaks detect --staged --redact`
+#      (true secret detection: entropy + pattern matching).
+#      It respects .gitleaks.toml — which allowlists the repo's two
+#      DELIBERATE credential carriers (the R94 owner-directed pattern):
+#      scripts/redeploy.sh (DEFAULT_PAT) and docs/REDEPLOY-PROMPT.md
+#      (base64 + raw fallback PAT). Keep the repo PRIVATE.
+#   2. Else: grep fallback over staged files for obvious secret-shaped
+#      literals (api_key/secret/token/password := 16+ char string).
+#
+# Exit codes: 0 = clean (commit proceeds) · 1 = potential secret (BLOCKED).
+#
+# Bypass (emergency, e.g. a test fixture with a fake secret):
+#   git commit --no-verify
+# Disable just this sub-hook: NO_GITLEAKS_HOOK=1
+set -uo pipefail
+
+if [ -t 1 ]; then
+  RED=$'\033[0;31m'; YEL=$'\033[0;33m'; GRN=$'\033[0;32m'; RST=$'\033[0m'
+else
+  RED=''; YEL=''; GRN=''; RST=''
+fi
+
+if [ "${NO_GITLEAKS_HOOK:-0}" = "1" ]; then
+  exit 0
+fi
+
+# ── Strategy 1: gitleaks (if installed) ─────────────────────────────────────
+if command -v gitleaks >/dev/null 2>&1; then
+  OUT=$(gitleaks detect --staged --redact --verbose 2>&1)
+  RC=$?
+  if [ "$RC" -eq 0 ]; then
+    echo "${GRN}✓ gitleaks: no secrets detected in staged changes${RST}"
+    exit 0
+  else
+    echo "${RED}✗ gitleaks: potential secret detected (commit BLOCKED):${RST}"
+    echo "$OUT"
+    echo ""
+    echo "${YEL}If this is a false positive:${RST}"
+    echo "  1. Add the file/pattern to .gitleaks.toml [allowlist]"
+    echo "  2. Or commit with --no-verify (emergencies only — leaves a reflog record)"
+    exit 1
+  fi
+fi
+
+# ── Strategy 2: grep fallback ───────────────────────────────────────────────
+echo "${YEL}⚠ gitleaks not installed — grep-based fallback scan (less accurate).${RST}"
+echo "${YEL}  Install gitleaks (github.com/gitleaks/gitleaks) for true detection.${RST}"
+
+STAGED=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null | grep -vE '\.env\.example$' || true)
+if [ -z "$STAGED" ]; then
+  exit 0
+fi
+
+HITS=0
+HIT_OUTPUT=""
+for f in $STAGED; do
+  [ -f "$f" ] || continue
+  if file "$f" 2>/dev/null | grep -qi 'text\|json\|xml\|script'; then
+    MATCH=$(grep -nE '(api[_-]?key|secret|token|password)[[:space:]]*[:=][[:space:]]*["'"'"'][A-Za-z0-9]{16,}' "$f" 2>/dev/null \
+      | grep -v 'process\.env' \
+      | grep -v 'crypto\.randomUUID' \
+      | grep -v 'crypto\.randomBytes' \
+      | grep -vE '^\s*//' \
+      | grep -vE '^\s*\*' \
+      | grep -vE '^\s*#' || true)
+    if [ -n "$MATCH" ]; then
+      HIT_OUTPUT="${HIT_OUTPUT}${f}:
+${MATCH}
+
+"
+      HITS=$((HITS + 1))
+    fi
+  fi
+done
+
+if [ "$HITS" -eq 0 ]; then
+  echo "${GRN}✓ grep fallback: no obvious secrets detected in staged changes${RST}"
+  exit 0
+else
+  echo "${RED}✗ grep fallback: potential secret(s) detected (commit BLOCKED):${RST}"
+  echo "$HIT_OUTPUT"
+  echo "${YEL}Fixes: use process.env refs, move literals to .env (gitignored), or --no-verify (emergencies only).${RST}"
+  exit 1
+fi
