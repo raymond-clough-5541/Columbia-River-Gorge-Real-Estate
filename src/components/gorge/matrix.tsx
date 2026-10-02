@@ -122,6 +122,67 @@ const MAX_COMPARE = 3;
  *  market keeps its visual identity across workspaces. */
 const COMPARE_COLORS = ["#0d9488", "#f59e0b", "#64748b"];
 
+/** Quick-compare metric definitions (round 11: hoisted to module scope so
+ *  the panel bars and the CSV export share ONE source of truth — they
+ *  can never drift). `winner` tags the per-metric leader only where the
+ *  investor direction is unambiguous (never on baseline/net buildable). */
+const QUICK_METRICS: {
+  label: string;
+  csvLabel: string;
+  value: (s: Submarket) => string;
+  raw: (s: Submarket) => number;
+  winner: "max" | "min" | null;
+  tag?: string;
+  title?: string;
+}[] = [
+  {
+    label: "Baseline",
+    csvLabel: "2026 baseline",
+    value: (s) => fmtCurrency(s.baselinePrice2026, { compact: true }),
+    raw: (s) => s.baselinePrice2026,
+    winner: null,
+  },
+  {
+    label: "20-yr CAGR",
+    csvLabel: "20-yr CAGR (%)",
+    value: (s) => fmtPct(s.projectedCagr),
+    raw: (s) => s.projectedCagr,
+    winner: "max",
+    tag: "leads",
+    title: "Highest projected appreciation in the selection",
+  },
+  {
+    label: "Net buildable",
+    csvLabel: "Net buildable (ac, mid)",
+    value: (s) =>
+      fmtAcres(Math.round((s.netBuildableAcresMin + s.netBuildableAcresMax) / 2)),
+    raw: (s) => (s.netBuildableAcresMin + s.netBuildableAcresMax) / 2,
+    winner: null,
+  },
+  {
+    label: "2046 f'cast",
+    csvLabel: "2046 forecast ($, band mid)",
+    value: (s) =>
+      fmtCurrency(
+        Math.round((s.projectedPrice2046Min + s.projectedPrice2046Max) / 2),
+        { compact: true }
+      ),
+    raw: (s) => (s.projectedPrice2046Min + s.projectedPrice2046Max) / 2,
+    winner: "max",
+    tag: "leads",
+    title: "Highest 2046 projected value (band midpoint)",
+  },
+  {
+    label: "Runway",
+    csvLabel: "Raw-land runway (yrs · depletion year)",
+    value: (s) => `${s.depletionYear - 2026} yrs · ${s.depletionYear}`,
+    raw: (s) => s.depletionYear - 2026,
+    winner: "max",
+    tag: "longest",
+    title: "Latest raw-land depletion in the selection",
+  },
+];
+
 /** Session-scoped pin persistence — survives the "Model the pinned set →
  *  ← Back to master matrix" round trip (view unmounts mid-loop). MatrixView
  *  only mounts post-hydration (the hash router serves the overview server
@@ -192,6 +253,39 @@ export function MatrixView({
         .filter((s): s is Submarket => Boolean(s)),
     [compareSlugs, submarkets]
   );
+
+  /** Round 11 — quick-compare CSV. Reads the same QUICK_METRICS the
+   *  bars render from, plus one identity row per market, so the file and
+   *  the panel can never disagree. */
+  const exportCompareCsv = () => {
+    if (compareMarkets.length === 0) return;
+    const headers = [
+      "Metric",
+      ...compareMarkets.map((m) => `${m.name} (${m.state})`),
+    ];
+    const rows: CsvCell[][] = [
+      [
+        "Jurisdiction",
+        ...compareMarkets.map(
+          (m) => `${m.county} · ${m.jurisdictionType}`
+        ),
+      ],
+      ...QUICK_METRICS.map((metric) => [
+        metric.csvLabel,
+        ...compareMarkets.map((m) => metric.value(m)),
+      ]),
+    ];
+    downloadCsv(
+      `quick-compare-${timestampSuffix()}`,
+      toCsv(headers, rows)
+    );
+    toast({
+      title: "Quick compare exported",
+      description: `${compareMarkets.length} market${
+        compareMarkets.length === 1 ? "" : "s"
+      } × ${QUICK_METRICS.length} metrics → CSV.`,
+    });
+  };
 
   // Mirror pins into sessionStorage so the "Model the pinned set → back"
   // round trip keeps the shortlist alive for the whole session.
@@ -939,6 +1033,15 @@ export function MatrixView({
                   ) : null}
                 </p>
                 <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={exportCompareCsv}
+                    aria-label="Export the quick compare as CSV"
+                    title="Export the compared markets and metrics as CSV"
+                    className="flex h-7 w-7 items-center justify-center rounded-md border text-muted-foreground transition-all hover:border-zinc-300 hover:text-foreground active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60 dark:hover:border-zinc-600"
+                  >
+                    <Download className="h-3.5 w-3.5" aria-hidden />
+                  </button>
                   {compareMarkets.length >= 2 ? (
                     <button
                       type="button"
@@ -1006,59 +1109,11 @@ export function MatrixView({
                   </div>
                 ))}
 
-                {/* Metric rows — bar width = value / max of the selection. */}
+                {/* Metric rows — bar width = value / max of the selection.
+                    QUICK_METRICS (module scope) is the single source of
+                    truth; the CSV export reads the same definitions. */}
                 {(() => {
-                  const mid = (s: Submarket) =>
-                    (s.netBuildableAcresMin + s.netBuildableAcresMax) / 2;
-                  const forecastMid = (s: Submarket) =>
-                    (s.projectedPrice2046Min + s.projectedPrice2046Max) / 2;
-                  const runway = (s: Submarket) => s.depletionYear - 2026;
-                  const rows: {
-                    label: string;
-                    value: (s: Submarket) => string;
-                    raw: (s: Submarket) => number;
-                    winner: "max" | "min" | null;
-                    tag?: string;
-                    title?: string;
-                  }[] = [
-                    {
-                      label: "Baseline",
-                      value: (s) => fmtCurrency(s.baselinePrice2026, { compact: true }),
-                      raw: (s) => s.baselinePrice2026,
-                      winner: null,
-                    },
-                    {
-                      label: "20-yr CAGR",
-                      value: (s) => fmtPct(s.projectedCagr),
-                      raw: (s) => s.projectedCagr,
-                      winner: "max",
-                      tag: "leads",
-                      title: "Highest projected appreciation in the selection",
-                    },
-                    {
-                      label: "Net buildable",
-                      value: (s) => fmtAcres(Math.round(mid(s))),
-                      raw: mid,
-                      winner: null,
-                    },
-                    {
-                      label: "2046 f'cast",
-                      value: (s) => fmtCurrency(Math.round(forecastMid(s)), { compact: true }),
-                      raw: forecastMid,
-                      winner: "max",
-                      tag: "leads",
-                      title: "Highest 2046 projected value (band midpoint)",
-                    },
-                    {
-                      label: "Runway",
-                      value: (s) => `${runway(s)} yrs · ${s.depletionYear}`,
-                      raw: runway,
-                      winner: "max",
-                      tag: "longest",
-                      title: "Latest raw-land depletion in the selection",
-                    },
-                  ];
-                  return rows.map((metric) => {
+                  return QUICK_METRICS.map((metric) => {
                     const raws = compareMarkets.map(metric.raw);
                     const max = Math.max(...raws);
                     const min = Math.min(...raws);

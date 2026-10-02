@@ -1,0 +1,28 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "1) **PASS** – The portfolio strip is cleanly laid out with legible tiles, clear labels, and no text overlap or clipping.\n2) **PASS** – The violet 2026$ tags are clearly legible in both the \"Appreciation Pick\" banner and the \"2046 Equity\" tile.\n3) **PASS** – The grid's \"2046 Equity\" value row correctly displays the violet 2026$ tag on its label.\n4) **PASS** – The amber what-if column is visually distinct with a dashed border and light background while remaining harmonious with the overall design.\n5) **PASS** – No layout defects are observed; all elements are properly aligned and spaced.",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": 1790923071,
+  "id": "202610021437481599949b87d84fe1",
+  "model": "glm-5v-turbo",
+  "object": "chat.completion",
+  "request_id": "202610021437481599949b87d84fe1",
+  "usage": {
+    "completion_tokens": 144,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "prompt_tokens": 1867,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "total_tokens": 2011
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "1. **PASS**: The 2-column grid tiles (Purchase, Down stroke, Carry/mo, 2046 equity, multiple) wrap cleanly within the 390px viewport without clipping or horizontal overflow.\n2. **PASS**: The violet \"2026$\" tag on the 2046 equity row is legible at this size with clear contrast and sufficient font size.\n3. **PASS**: The header row (\"PORTFOLIO · 3 COLS\" and the sub-row) is fully readable with appropriate font weight and spacing.\n4. **FAIL**: The text in the \"APPRECIATION PICK\" title (\"GMA Luxury Farm & Vineyard Estate ...\") is truncated to illegibility with an ellipsis.",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": 1790923080,
+  "id": "202610021437575e04a82aa8344836",
+  "model": "glm-5v-turbo",
+  "object": "chat.completion",
+  "request_id": "202610021437575e04a82aa8344836",
+  "usage": {
+    "completion_tokens": 149,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "prompt_tokens": 507,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "total_tokens": 656
+  }
+}

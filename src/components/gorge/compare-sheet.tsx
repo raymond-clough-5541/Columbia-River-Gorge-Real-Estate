@@ -4,11 +4,13 @@ import { useMemo, useState, type FormEvent } from "react";
 import Image from "next/image";
 import {
   Check,
+  Coins,
   Crown,
   Download,
   FlaskConical,
   GitCompareArrows,
   Info,
+  Landmark,
   Pencil,
   PiggyBank,
   TrendingUp,
@@ -50,6 +52,8 @@ import {
   fmtPct,
   futureValue,
   monthlyPayment,
+  realValue,
+  remainingBalance,
   runwayYears,
   type ListingSubmarketSummary,
   type PropertyListing,
@@ -149,6 +153,12 @@ const clampWhatIfNumber = (raw: string, min: number, max: number): number => {
  *  Financing Lab's Income Lens radiogroup (lib/gorge.ts owns the band
  *  math) so the two surfaces can never drift apart. */
 const SEASON_ORDER: RentSeasonality[] = ["lean", "annualized", "peak"];
+
+/** Round 11 — the sheet's real-terms deflator. Fixed at the same 2.5%
+ *  consensus assumption the Projections workspace defaults to (that
+ *  workspace owns the adjustable slider; the sheet keeps one knob to
+ *  avoid drowning the underwriting controls). */
+const SHEET_INFLATION = 2.5;
 /** Compact control labels — "Annualized" is wider than the sheet header
  *  can spare on mobile; the tooltip carries the full band note. */
 const SEASON_SHORT: Record<RentSeasonality, string> = {
@@ -409,6 +419,12 @@ export function CompareSheet({
    *  starred listings and what-ifs alike. Defaults to "annualized" so
    *  the sheet and the Financing Lab agree out of the box. */
   const [season, setSeason] = useState<RentSeasonality>("annualized");
+  /** Round 11 — real-terms lens: deflates the 2046 family (per-column
+   *  2046 values, the verdict's appreciation figure, and the whole
+   *  portfolio strip) back into 2026 dollars at SHEET_INFLATION. Rent
+   *  and carry rows are already current-year figures, so they stay put
+   *  (noted in the footer while the lens is on). */
+  const [realTerms, setRealTerms] = useState(false);
   const [form, setForm] = useState<WhatIfForm>({
     price: "",
     type: "Single-Family",
@@ -433,6 +449,69 @@ export function CompareSheet({
     [starred, whatIfs, season]
   );
 
+  /* Round 11 display layer — exactly the Projections workspace's
+   * displayValue pattern: the nominal underwrite stays canonical (winner
+   * picks, CSV, FIFO — all order-stable), and a derived array swaps the
+   * 2046 family for its deflated twins when the lens is on. The transform
+   * is monotone, so any winner computed on nominal FVs is still the
+   * winner on the displayed values. */
+  const displayEntries = useMemo(
+    () =>
+      realTerms
+        ? entries.map((m) => ({
+            ...m,
+            fv2046: realValue(m.fv2046, SHEET_INFLATION, 20),
+          }))
+        : entries,
+    [entries, realTerms]
+  );
+
+  /* ---- Portfolio strip (round 11) — the aggregate readout across every
+   * column: what the whole shortlist costs today, what it carries per
+   * month, and the 20-year equity runway if every note amortizes to
+   * plan while every market compounds at its own CAGR. Land paper and
+   * improved product underwrite at their own sheet postures (35%/8.5% vs
+   * 20%/6.5%), so the blend is honest per entry, not one blanket rate. */
+  const portfolio = useMemo(() => {
+    if (entries.length === 0) return null;
+    const totalPrice = entries.reduce((a, m) => a + m.listing.price, 0);
+    const totalDown = entries.reduce(
+      (a, m) => a + (m.listing.price * (m.isLand ? LAND_DOWN_PCT : SHEET_DOWN_PCT)) / 100,
+      0
+    );
+    const totalCarry = entries.reduce((a, m) => a + m.monthlyCarry, 0);
+    const totalAcres = entries.reduce((a, m) => a + m.listing.acreage, 0);
+    const landCount = entries.filter((m) => m.isLand).length;
+    // Each note amortizes at its own rate over SHEET_TERM; 20 years =
+    // 240 months elapsed by the 2046 horizon.
+    const remainingDebt = entries.reduce(
+      (a, m) =>
+        a +
+        remainingBalance(
+          m.loan,
+          m.isLand ? LAND_RATE : SHEET_RATE,
+          SHEET_TERM,
+          240
+        ),
+      0
+    );
+    const fvTotal = displayEntries.reduce((a, m) => a + m.fv2046, 0);
+    const equity = fvTotal - remainingDebt;
+    return {
+      count: entries.length,
+      landCount,
+      totalPrice,
+      totalDown,
+      totalCarry,
+      totalAcres,
+      fvTotal,
+      remainingDebt,
+      equity,
+      leverage: totalDown > 0 ? equity / totalDown : 0,
+      blendedMultiple: totalPrice > 0 ? fvTotal / totalPrice : 0,
+    };
+  }, [entries, displayEntries]);
+
   const bestIncome = useMemo(() => {
     const improved = entries.filter((m) => !m.isLand);
     if (improved.length === 0) return null;
@@ -442,6 +521,13 @@ export function CompareSheet({
     if (entries.length === 0) return null;
     return entries.reduce((a, b) => (b.fv2046 > a.fv2046 ? b : a));
   }, [entries]);
+  /** The appreciation banner figure must match the lens — display layer,
+   *  not the canonical pick (same entry either way; the transform is
+   *  monotone). */
+  const bestEquityDisplay = useMemo(() => {
+    if (displayEntries.length === 0) return null;
+    return displayEntries.reduce((a, b) => (b.fv2046 > a.fv2046 ? b : a));
+  }, [displayEntries]);
 
   /* ---- What-if editor plumbing (all toasts fire in event handlers,
      never inside state updaters — the round-6 bug class). One shared
@@ -685,8 +771,9 @@ export function CompareSheet({
     const band = SEASONAL_RENT_BANDS[season];
     const seasonTag =
       season === "annualized" ? "" : ` (${season}-season rents ×${band.mult.toFixed(2)})`;
+    const realTag = realTerms ? " · real 2026 $ (deflated 2.5%/yr)" : "";
     const headers: string[] = [
-      `Metric${seasonTag}`,
+      `Metric${seasonTag}${realTerms ? " (real 2026 $)" : ""}`,
       ...entries.map((m) =>
         isWhatIf(m.listing.id)
           ? `${m.listing.title} (what-if)`
@@ -695,7 +782,10 @@ export function CompareSheet({
     ];
     const rows: CsvCell[][] = ROWS.map((r) => [
       `${r.label} (${r.hint})`,
-      ...entries.map((m) => (r.na?.(m) ? "n/a" : r.format(m))),
+      ...(realTerms
+        ? // The display layer carries the deflated 2046 family.
+          displayEntries.map((m) => (r.na?.(m) ? "n/a" : r.format(m)))
+        : entries.map((m) => (r.na?.(m) ? "n/a" : r.format(m)))),
     ]);
     downloadCsv(
       `watchlist-comparison-${timestampSuffix()}`,
@@ -709,7 +799,7 @@ export function CompareSheet({
         season === "annualized"
           ? ""
           : ` · rents at the ${season}-season band (×${band.mult.toFixed(2)})`
-      }.`,
+      }${realTag}.`,
     });
   };
 
@@ -940,6 +1030,12 @@ export function CompareSheet({
                       · {season === "peak" ? "peak" : "lean"}-season rents
                     </>
                   ) : null}
+                  {realTerms ? (
+                    <span className="text-violet-600 dark:text-violet-300">
+                      {" "}
+                      · real 2026 dollars
+                    </span>
+                  ) : null}
                   {whatIfs.length > 0 ? (
                     /* Subtle amber clause — inline span so the description
                        reflows without layout-shift risk. */
@@ -997,6 +1093,28 @@ export function CompareSheet({
                     })}
                   </div>
                 </div>
+                {/* Round 11 — real-terms lens. One knob, fixed 2.5%
+                    deflator (the Projections workspace owns the adjustable
+                    slider); violet to match the lens language established
+                    there. Rents/carry are already current-year figures — the
+                    tooltip says so, the footer repeats it. */}
+                <button
+                  type="button"
+                  onClick={() => setRealTerms((v) => !v)}
+                  aria-pressed={realTerms}
+                  title={
+                    "Deflate the 2046 family — per-column 2046 values, multiples, the verdict figure and the portfolio strip — back into 2026 dollars at a 2.5%/yr inflation assumption. Rent and carry rows are already current-year figures and stay put."
+                  }
+                  className={cn(
+                    "inline-flex h-7 shrink-0 items-center gap-1 rounded-md border px-2 text-[11px] font-semibold transition-all active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/70",
+                    realTerms
+                      ? "border-violet-500/60 bg-violet-500/10 text-violet-700 dark:text-violet-300"
+                      : "text-muted-foreground hover:border-zinc-300 hover:text-foreground dark:hover:border-zinc-600"
+                  )}
+                >
+                  <Coins className="h-3.5 w-3.5" aria-hidden />
+                  2026$
+                </button>
                 {canWhatIf ? (
                   <Popover
                     open={editorOpen && !isEditing}
@@ -1093,11 +1211,19 @@ export function CompareSheet({
                   >
                     {bestEquity ? pickTitle(bestEquity) : "—"}
                   </p>
-                  {bestEquity ? (
+                  {bestEquityDisplay ? (
                     <p className="mt-0.5 text-[11.5px] text-muted-foreground tabular-nums">
-                      {fmtCurrency(Math.round(bestEquity.fv2046), { compact: true })} at{" "}
-                      {fmtPct(bestEquity.listing.submarket?.projectedCagr ?? 0)} CAGR ·{" "}
-                      {bestEquity.multiple.toFixed(2)}× multiple
+                      {fmtCurrency(Math.round(bestEquityDisplay.fv2046), { compact: true })}{" "}
+                      {realTerms ? (
+                        <span
+                          className="mr-0.5 rounded-sm border border-violet-500/30 bg-violet-500/10 px-1 py-px text-[9.5px] font-semibold text-violet-700 dark:text-violet-300"
+                          title="Deflated to 2026 dollars at 2.5%/yr"
+                        >
+                          2026$
+                        </span>
+                      ) : null}
+                      at {fmtPct(bestEquityDisplay.listing.submarket?.projectedCagr ?? 0)} CAGR ·{" "}
+                      {bestEquityDisplay.multiple.toFixed(2)}× multiple
                     </p>
                   ) : null}
                 </div>
@@ -1112,17 +1238,106 @@ export function CompareSheet({
               ) : null}
             </div>
 
-            {/* Comparison grid — horizontally scrollable, sticky label column */}
+            {/* Round 11 — portfolio strip: the whole shortlist as ONE position.
+                Aggregates ride the display layer, so the 2046 family honors
+                the real-terms lens; the amortization blend is per-entry (land
+                paper 35%/8.5%, improved 20%/6.5%) rather than one blanket
+                rate, mirroring the per-column sheet posture. */}
+            {portfolio ? (
+              <div
+                role="region"
+                aria-label="Portfolio aggregate"
+                className="border-b bg-muted/25 px-5 py-3"
+              >
+                <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
+                  <div className="min-w-0">
+                    <p className="flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground">
+                      <Landmark className="h-3.5 w-3.5" aria-hidden />
+                      Portfolio
+                      <span className="rounded-sm bg-muted px-1.5 py-px text-[10px] font-medium tabular-nums">
+                        {portfolio.count} col{portfolio.count === 1 ? "" : "s"}
+                        {portfolio.landCount > 0
+                          ? ` · ${portfolio.landCount} land`
+                          : ""}
+                      </span>
+                    </p>
+                    <p className="mt-1 text-[11.5px] text-muted-foreground tabular-nums">
+                      {fmtAcres(portfolio.totalAcres, 1)} deed acres · blended{" "}
+                      {portfolio.blendedMultiple.toFixed(2)}×
+                    </p>
+                  </div>
+                  <div className="ml-auto flex flex-wrap gap-x-5 gap-y-3">
+                    <div className="min-w-[104px]">
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                        Purchase
+                      </p>
+                      <p className="mt-0.5 text-[15px] font-semibold leading-tight tabular-nums">
+                        {fmtCurrency(Math.round(portfolio.totalPrice), { compact: true })}
+                      </p>
+                    </div>
+                    <div className="min-w-[104px] border-l border-border pl-4">
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                        Down stroke
+                      </p>
+                      <p className="mt-0.5 text-[15px] font-semibold leading-tight tabular-nums">
+                        {fmtCurrency(Math.round(portfolio.totalDown), { compact: true })}
+                      </p>
+                    </div>
+                    <div className="min-w-[104px] border-l border-border pl-4">
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                        Carry / mo
+                      </p>
+                      <p className="mt-0.5 text-[15px] font-semibold leading-tight tabular-nums">
+                        {fmtCurrency(Math.round(portfolio.totalCarry), { compact: true })}
+                      </p>
+                    </div>
+                    <div className="min-w-[124px] border-l border-border pl-4">
+                      <p className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                        2046 equity
+                        {realTerms ? (
+                          <span
+                            className="rounded-sm border border-violet-500/30 bg-violet-500/10 px-1 py-px text-[9px] font-bold text-violet-700 dark:text-violet-300"
+                            title="Deflated to 2026 dollars at 2.5%/yr"
+                          >
+                            2026$
+                          </span>
+                        ) : null}
+                      </p>
+                      <p className="mt-0.5 text-[15px] font-semibold leading-tight tabular-nums text-emerald-600 dark:text-emerald-400">
+                        {fmtCurrency(Math.round(portfolio.equity), { compact: true })}
+                      </p>
+                      <p className="mt-0.5 text-[10.5px] text-muted-foreground tabular-nums">
+                        {fmtCurrency(Math.round(portfolio.fvTotal), { compact: true })} value −{" "}
+                        {fmtCurrency(Math.round(portfolio.remainingDebt), { compact: true })} debt
+                      </p>
+                    </div>
+                    <div className="min-w-[104px] border-l border-border pl-4">
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                        On the down stroke
+                      </p>
+                      <p className="mt-0.5 text-[15px] font-semibold leading-tight tabular-nums">
+                        {portfolio.leverage.toFixed(2)}×
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {/* Comparison grid — horizontally scrollable, sticky label column.
+                Round 11: sourced from displayEntries so the 2046 value and
+                multiple rows honor the real-terms lens (every other row is
+                byte-identical between the two arrays). */}
             <div className="overflow-x-auto">
               <div
                 className="grid border-b text-[12.5px]"
                 style={{
-                  gridTemplateColumns: `152px repeat(${entries.length}, minmax(168px, 1fr))`,
+                  gridTemplateColumns: `152px repeat(${displayEntries.length}, minmax(168px, 1fr))`,
                 }}
               >
                 {/* Header row: photos + titles */}
                 <div className="sticky left-0 z-10 border-r bg-background/95 backdrop-blur-sm" />
-                {entries.map((m) => {
+                {displayEntries.map((m) => {
                   if (isWhatIf(m.listing.id)) {
                     return (
                       <div
@@ -1238,14 +1453,24 @@ export function CompareSheet({
 
                 {/* Metric rows */}
                 {ROWS.map((row) => {
-                  const win = winnerOf(row, entries);
+                  const win = winnerOf(row, displayEntries);
                   return (
                     <div key={row.key} className="contents">
                       <div className="sticky left-0 z-10 border-r border-t bg-background/95 px-3 py-2.5 backdrop-blur-sm">
-                        <p className="text-[12px] font-semibold leading-tight">{row.label}</p>
+                        <p className="flex items-center gap-1 text-[12px] font-semibold leading-tight">
+                          {row.label}
+                          {realTerms && (row.key === "fv" || row.key === "mult") ? (
+                            <span
+                              className="rounded-sm border border-violet-500/30 bg-violet-500/10 px-1 py-px text-[9px] font-bold text-violet-700 dark:text-violet-300"
+                              title="Deflated to 2026 dollars at 2.5%/yr"
+                            >
+                              2026$
+                            </span>
+                          ) : null}
+                        </p>
                         <p className="mt-0.5 text-[10.5px] text-muted-foreground">{row.hint}</p>
                       </div>
-                      {entries.map((m) => {
+                      {displayEntries.map((m) => {
                         const isNa = row.na?.(m);
                         const isWin = win && win.listing.id === m.listing.id;
                         const rose = row.negativeRose?.(m);
@@ -1289,6 +1514,14 @@ export function CompareSheet({
                   Rent is market-indexed per round 6 — same floor plan pencils
                   differently in Hood River vs Wishram.
                 </p>
+                {realTerms ? (
+                  <p className="flex items-center gap-1.5 text-[11.5px] text-violet-700 dark:text-violet-300">
+                    <Coins className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                    Real-terms lens: the 2046 family is deflated to 2026
+                    dollars at 2.5%/yr; rent and carry rows are already
+                    current-year figures.
+                  </p>
+                ) : null}
                 {whatIfs.length > 0 ? (
                   <p className="flex items-center gap-1.5 text-[11.5px] text-amber-700/90 dark:text-amber-300/80">
                     <FlaskConical className="h-3.5 w-3.5 shrink-0 text-amber-500" aria-hidden />

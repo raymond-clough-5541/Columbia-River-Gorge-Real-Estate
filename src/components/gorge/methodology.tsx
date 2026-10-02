@@ -159,6 +159,19 @@ function MethodologyBody() {
           inventory no longer knows are skipped with a note rather than
           silently dropped.
         </p>
+        <p>
+          <strong className="text-foreground">Portfolio strip (round 11):</strong>{" "}
+          the sheet also reads the whole shortlist as one position —
+          purchase price, down stroke, and monthly carry summed per entry at
+          each one&apos;s own sheet posture. The 2046 equity is the
+          portfolio&apos;s compounded value minus every remaining note
+          balance after 240 on-time months (B = P·((1+i)ᴺ−(1+i)ⁿ)/((1+i)ᴺ−1)),
+          and the leverage multiple divides that equity by the total down
+          stroke. The sheet&apos;s 2026$ lens (violet) deflates the same
+          2046 family the Projections workspace deflates — fixed at 2.5%/yr
+          there, adjustable on the Projections side — while rent and carry
+          rows stay current-year figures.
+        </p>
       </Section>
 
       <Section title="5 · Comparable matching">
