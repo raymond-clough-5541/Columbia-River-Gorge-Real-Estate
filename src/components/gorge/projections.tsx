@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import {
   CartesianGrid,
   Line,
@@ -17,8 +17,10 @@ import {
   Flame,
   FolderOpen,
   GitCompareArrows,
+  Link2,
   LineChart as LineChartIcon,
   RotateCcw,
+  Share2,
   Sigma,
   Trash2,
   TrendingUp,
@@ -47,6 +49,7 @@ import {
   SectionHeader,
   StateBadge,
 } from "./shared";
+import { MethodologyTrigger } from "./methodology";
 
 const START_YEAR = 2026;
 const MAX_SELECTED = 5;
@@ -125,6 +128,61 @@ interface TooltipEntry {
   color?: string;
 }
 
+/* ---------------------------------------------------------------- */
+/* Shareable scenario links — the full input set serialized into the   */
+/* hash query ( #/projections?m=…&pv=…&r=…&n=…&s=1&d=0 ) so a         */
+/* hypothesis can be bookmarked, reloaded, or pasted to a partner.     */
+/* ---------------------------------------------------------------- */
+
+interface ShareState {
+  selected: string[];
+  pv: number;
+  cagr: number;
+  horizon: number;
+  showScenario: boolean;
+  depletionAdjusted: boolean;
+}
+
+function readSharedFromHash(): ShareState | null {
+  if (typeof window === "undefined") return null;
+  const hash = window.location.hash;
+  const qIndex = hash.indexOf("?");
+  if (qIndex === -1) return null;
+  try {
+    const params = new URLSearchParams(hash.slice(qIndex + 1));
+    if (!["m", "pv", "r", "n"].some((k) => params.has(k))) return null;
+    const m = (params.get("m") ?? "")
+      .split(",")
+      .map((x) => x.trim())
+      .filter(Boolean);
+    return {
+      selected: m,
+      pv: clampNum(Number(params.get("pv")), 250_000, 900_000, 455_000),
+      cagr: clampNum(Number(params.get("r")), 3, 8, 4.7),
+      horizon: clampNum(Number(params.get("n")), 5, 25, 20),
+      showScenario: params.get("s") !== "0",
+      depletionAdjusted: params.get("d") === "1",
+    };
+  } catch {
+    return null;
+  }
+}
+
+function clampNum(v: number, min: number, max: number, fallback: number): number {
+  return Number.isFinite(v) && v >= min && v <= max ? v : fallback;
+}
+
+function buildShareHash(state: ShareState): string {
+  const params = new URLSearchParams();
+  if (state.selected.length > 0) params.set("m", state.selected.join(","));
+  params.set("pv", String(Math.round(state.pv)));
+  params.set("r", state.cagr.toFixed(1));
+  params.set("n", String(state.horizon));
+  params.set("s", state.showScenario ? "1" : "0");
+  params.set("d", state.depletionAdjusted ? "1" : "0");
+  return `#/projections?${params.toString()}`;
+}
+
 function ChartTooltip({
   active,
   payload,
@@ -184,12 +242,30 @@ export function ProjectionsView({ submarkets }: { submarkets: Submarket[] }) {
       ),
     [submarkets]
   );
+  // Shared-link state is adopted AFTER mount (never during render/hydration)
+  // so the SSR tree always matches the first client paint. Defaults render
+  // on both sides; the effect then swaps in the URL's inputs.
   const [selected, setSelected] = useState<string[]>(defaultSelected);
   const [pv, setPv] = useState(455000);
   const [cagr, setCagr] = useState(4.7);
   const [horizon, setHorizon] = useState(20);
   const [showScenario, setShowScenario] = useState(true);
   const [depletionAdjusted, setDepletionAdjusted] = useState(false);
+  const [sharedNotice, setSharedNotice] = useState(false);
+
+  useEffect(() => {
+    const s = readSharedFromHash();
+    if (!s) return;
+    setSelected(
+      s.selected.filter((slug) => submarkets.some((m) => m.slug === slug))
+    );
+    setPv(s.pv);
+    setCagr(s.cagr);
+    setHorizon(s.horizon);
+    setShowScenario(s.showScenario);
+    setDepletionAdjusted(s.depletionAdjusted);
+    setSharedNotice(true);
+  }, [submarkets]);
 
   const selectedMarkets = submarkets.filter((s) => selected.includes(s.slug));
   const endYear = START_YEAR + horizon;
@@ -247,6 +323,11 @@ export function ProjectionsView({ submarkets }: { submarkets: Submarket[] }) {
     setDepletionAdjusted(false);
     setScenarioName("");
     setCompareIds([]);
+    setSharedNotice(false);
+    // A reset should also drop a shared-link query off the address bar.
+    if (window.location.hash !== "#/projections") {
+      window.history.replaceState(null, "", "#/projections");
+    }
   };
 
   /* ---------------- Saved-scenario actions ---------------- */
@@ -323,6 +404,39 @@ export function ProjectionsView({ submarkets }: { submarkets: Submarket[] }) {
   const scenarioMultipleOf = (sc: SavedScenario) =>
     Math.pow(1 + sc.cagr / 100, sc.horizon);
 
+  /** Serialize the current inputs into the address bar and copy the link. */
+  const shareScenario = async () => {
+    const hash = buildShareHash({
+      selected,
+      pv,
+      cagr,
+      horizon,
+      showScenario,
+      depletionAdjusted,
+    });
+    // replaceState keeps the router untouched (no hashchange, no re-mount).
+    window.history.replaceState(null, "", hash);
+    const url = `${window.location.origin}${window.location.pathname}${hash}`;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+      } else {
+        throw new Error("clipboard unavailable");
+      }
+      toast({
+        title: "Share link copied",
+        description:
+          "The full input set — markets, PV, rate, horizon, regime — is now in the URL. Paste it anywhere.",
+      });
+    } catch {
+      toast({
+        title: "Link is in the address bar",
+        description:
+          "Clipboard access was blocked — copy the URL from the location bar instead.",
+      });
+    }
+  };
+
   const exportSeriesCsv = () => {
     const headers = [
       "Year",
@@ -351,16 +465,55 @@ export function ProjectionsView({ submarkets }: { submarkets: Submarket[] }) {
         title="FV = PV · (1 + r)ⁿ, applied to every market in the Gorge"
         description="Select submarkets, override the baseline price and growth rate, and stretch the horizon to stress-test development hypotheses against the corridor's statutory land ceiling."
         action={
-          <Button
-            variant="outline"
-            onClick={reset}
-            className="h-9 gap-2 text-[13px]"
-          >
-            <RotateCcw className="h-3.5 w-3.5" aria-hidden />
-            Reset defaults
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={shareScenario}
+              className="h-9 gap-2 text-[13px]"
+              title="Encode the current inputs into a shareable URL"
+            >
+              <Share2 className="h-3.5 w-3.5" aria-hidden />
+              Share link
+            </Button>
+            <Button
+              variant="outline"
+              onClick={reset}
+              className="h-9 gap-2 text-[13px]"
+            >
+              <RotateCcw className="h-3.5 w-3.5" aria-hidden />
+              Reset defaults
+            </Button>
+          </div>
         }
       />
+
+      {sharedNotice ? (
+        <div
+          className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-emerald-500/30 bg-emerald-500/[0.06] px-4 py-2.5 text-[13px]"
+          role="status"
+        >
+          <p className="flex min-w-0 items-center gap-2">
+            <Link2 className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden />
+            <span className="truncate">
+              Inputs restored from a{" "}
+              <span className="font-semibold text-emerald-700 dark:text-emerald-300">
+                shared scenario link
+              </span>{" "}
+              — {selectedMarkets.length} market
+              {selectedMarkets.length === 1 ? "" : "s"} · {fmtCurrency(pv, { compact: true })} ·{" "}
+              {fmtPct(cagr)} · {horizon} yrs.
+            </span>
+          </p>
+          <button
+            type="button"
+            onClick={() => setSharedNotice(false)}
+            aria-label="Dismiss notice"
+            className="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          >
+            <X className="h-3.5 w-3.5" aria-hidden />
+          </button>
+        </div>
+      ) : null}
 
       <div className="grid gap-4 lg:grid-cols-4">
         {/* Controls */}
@@ -535,9 +688,15 @@ export function ProjectionsView({ submarkets }: { submarkets: Submarket[] }) {
 
           {/* Live formula */}
           <div className="rounded-xl border bg-card p-5 shadow-sm">
-            <div className="flex items-center gap-2">
-              <Sigma className="h-4 w-4 text-muted-foreground" aria-hidden />
-              <MicroLabel>Live Formula</MicroLabel>
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Sigma className="h-4 w-4 text-muted-foreground" aria-hidden />
+                <MicroLabel>Live Formula</MicroLabel>
+              </div>
+              <MethodologyTrigger
+                label="How computed?"
+                className="text-[11.5px]"
+              />
             </div>
             <div className="mt-3 space-y-1.5 rounded-lg border bg-background p-3.5 font-mono text-[12.5px] leading-relaxed">
               <p className="text-muted-foreground">FV = PV · (1 + r)ⁿ</p>

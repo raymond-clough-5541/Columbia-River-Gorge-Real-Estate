@@ -1,6 +1,7 @@
 "use client";
 
 import { Mountain, ShieldAlert } from "lucide-react";
+import { MethodologyTrigger } from "./methodology";
 
 export function SiteFooter() {
   return (
@@ -24,20 +25,25 @@ export function SiteFooter() {
             </p>
           </div>
 
-          <nav aria-label="Footer" className="grid grid-cols-2 gap-x-12 gap-y-2 text-sm">
-            <a href="#/" className="text-muted-foreground transition-colors hover:text-foreground">
-              Executive Overview
-            </a>
-            <a href="#/matrix" className="text-muted-foreground transition-colors hover:text-foreground">
-              Master Matrix
-            </a>
-            <a href="#/projections" className="text-muted-foreground transition-colors hover:text-foreground">
-              Projections
-            </a>
-            <a href="#/listings" className="text-muted-foreground transition-colors hover:text-foreground">
-              Listings
-            </a>
-          </nav>
+          <div className="flex flex-col gap-2">
+            <nav aria-label="Footer" className="grid grid-cols-2 gap-x-12 gap-y-2 text-sm">
+              <a href="#/" className="text-muted-foreground transition-colors hover:text-foreground">
+                Executive Overview
+              </a>
+              <a href="#/matrix" className="text-muted-foreground transition-colors hover:text-foreground">
+                Master Matrix
+              </a>
+              <a href="#/projections" className="text-muted-foreground transition-colors hover:text-foreground">
+                Projections
+              </a>
+              <a href="#/listings" className="text-muted-foreground transition-colors hover:text-foreground">
+                Listings
+              </a>
+            </nav>
+            <div className="mt-1 md:text-right">
+              <MethodologyTrigger label="Methodology & sources" className="text-[13px]" />
+            </div>
+          </div>
         </div>
 
         <div className="mt-8 flex flex-col gap-3 border-t pt-6 text-[12px] text-muted-foreground sm:flex-row sm:items-start sm:justify-between">

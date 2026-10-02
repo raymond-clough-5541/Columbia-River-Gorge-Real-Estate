@@ -10,12 +10,14 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { Calculator, ChevronDown, Info, Landmark, PiggyBank, Scale } from "lucide-react";
+import { Calculator, ChevronDown, Info, Landmark, PiggyBank, Scale, Warehouse } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
 import {
   INSURANCE_RATE,
   PROPERTY_TAX_RATES,
+  RENTAL_RESERVE_RATE,
+  estimateMarketRent,
   fmtCurrency,
   fmtPct,
   futureValue,
@@ -33,6 +35,14 @@ import { MicroLabel } from "./shared";
 
 const TERMS = [15, 20, 30] as const;
 
+/** Investor rent postures applied on top of the market-rent heuristic. */
+const RENT_POSTURES = [
+  { id: "conservative", label: "Conservative", mult: 0.85 },
+  { id: "base", label: "Base", mult: 1 },
+  { id: "aggressive", label: "Aggressive", mult: 1.15 },
+] as const;
+type RentPosture = (typeof RENT_POSTURES)[number]["id"];
+
 export function FinancingLab({ listing }: { listing: PropertyListing }) {
   const isLand = listing.squareFeet === 0;
   const defaultDown = isLand ? 35 : 20;
@@ -41,8 +51,15 @@ export function FinancingLab({ listing }: { listing: PropertyListing }) {
   const [rate, setRate] = useState(isLand ? 8.5 : 6.5);
   const [term, setTerm] = useState<(typeof TERMS)[number]>(30);
   const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [posture, setPosture] = useState<RentPosture>("base");
 
   const state = listing.submarket?.state ?? "OR";
+  const baseRent = useMemo(
+    () => estimateMarketRent(listing),
+    [listing]
+  );
+  const postureMult =
+    RENT_POSTURES.find((p) => p.id === posture)?.mult ?? 1;
 
   const calc = useMemo(() => {
     const price = Math.max(1, listing.price);
@@ -53,6 +70,12 @@ export function FinancingLab({ listing }: { listing: PropertyListing }) {
     const insMonthly = isLand ? 0 : (price * INSURANCE_RATE) / 12;
     const totalMonthly = pi + taxMonthly + insMonthly;
     const interest = totalInterest(loan, rate, term);
+
+    // Income lens: gross rent (market heuristic × investor posture) → NOI
+    // after an 8% operating reserve, then cash flow under the live note.
+    const grossAnnual =
+      (baseRent.dwelling * postureMult + baseRent.agriculture) * 12;
+    const noi = grossAnnual * (1 - RENTAL_RESERVE_RATE);
 
     // 20-year equity runway: value compounds at the submarket CAGR while the
     // amortizing balance burns down — the classic Gorge leveraged hold.
@@ -112,8 +135,19 @@ export function FinancingLab({ listing }: { listing: PropertyListing }) {
       cagr,
       schedule,
       halfLifeYear,
+      income: {
+        rentMonthly: baseRent.dwelling * postureMult + baseRent.agriculture,
+        agMonthly: baseRent.agriculture,
+        grossAnnual,
+        noi,
+        grossYield: (grossAnnual / price) * 100,
+        noiYield: (noi / price) * 100,
+        annualCarry: totalMonthly * 12,
+        annualCashFlow: noi - totalMonthly * 12,
+        cashOnCash: down > 0 ? (noi - totalMonthly * 12) / down : 0,
+      },
     };
-  }, [listing.price, listing.submarket?.projectedCagr, downPct, rate, term, state, isLand]);
+  }, [listing, listing.price, listing.submarket?.projectedCagr, downPct, rate, term, state, isLand, baseRent, postureMult]);
 
   return (
     <div className="rounded-lg border bg-background p-4">
@@ -243,6 +277,127 @@ export function FinancingLab({ listing }: { listing: PropertyListing }) {
           </span>
         </div>
       </div>
+
+      {/* Income lens — rental stress-test */}
+      {!isLand ? (
+        <div className="mt-3 rounded-lg border bg-card p-3.5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Warehouse className="h-4 w-4 text-muted-foreground" aria-hidden />
+              <MicroLabel>Income Lens · Rental Stress-Test</MicroLabel>
+            </div>
+            <div
+              role="radiogroup"
+              aria-label="Rent posture"
+              className="flex rounded-md border bg-background p-0.5"
+            >
+              {RENT_POSTURES.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={posture === p.id}
+                  onClick={() => setPosture(p.id)}
+                  title={`Market rent × ${p.mult.toFixed(2)}`}
+                  className={cn(
+                    "h-6 rounded px-2 text-[11px] font-semibold transition-all active:scale-[0.97]",
+                    posture === p.id
+                      ? "bg-zinc-900 text-white dark:bg-emerald-500 dark:text-zinc-950"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-2.5 flex items-baseline justify-between gap-3 border-b border-border/60 pb-2.5">
+            <span className="text-[12px] text-muted-foreground">
+              Est. market rent
+              <span className="ml-1.5 text-[10.5px] opacity-70">({baseRent.note})</span>
+            </span>
+            <span className="text-[15px] font-semibold tabular-nums">
+              {fmtCurrency(Math.round(calc.income.rentMonthly))}
+              <span className="text-[11px] font-normal text-muted-foreground">/mo</span>
+            </span>
+          </div>
+
+          <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {[
+              {
+                label: "Gross yield",
+                value: fmtPct(calc.income.grossYield),
+                sub: "rent ÷ price",
+                tone: "default" as const,
+              },
+              {
+                label: "NOI yield",
+                value: fmtPct(calc.income.noiYield),
+                sub: `after ${fmtPct(RENTAL_RESERVE_RATE * 100, 0)} reserve`,
+                tone: calc.income.noiYield >= rate ? ("emerald" as const) : ("default" as const),
+              },
+              {
+                label: "Annual cash flow",
+                value: fmtCurrency(Math.round(calc.income.annualCashFlow), { compact: true }),
+                sub: "NOI − note carry",
+                tone: calc.income.annualCashFlow >= 0 ? ("emerald" as const) : ("rose" as const),
+              },
+              {
+                label: "Cash-on-cash",
+                value: `${calc.income.cashOnCash >= 0 ? "" : "−"}${Math.abs(calc.income.cashOnCash * 100).toFixed(1)}%`,
+                sub: "on the down stroke",
+                tone: calc.income.cashOnCash >= 0 ? ("emerald" as const) : ("rose" as const),
+              },
+            ].map((m) => (
+              <div
+                key={m.label}
+                className={cn(
+                  "rounded-md border bg-background p-2.5 text-center",
+                  m.tone === "emerald" && "border-emerald-500/30 bg-emerald-500/[0.05]",
+                  m.tone === "rose" && "border-rose-500/30 bg-rose-500/[0.05]"
+                )}
+              >
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  {m.label}
+                </p>
+                <p
+                  className={cn(
+                    "mt-0.5 text-[13.5px] font-semibold tabular-nums",
+                    m.tone === "emerald" && "text-emerald-600 dark:text-emerald-400",
+                    m.tone === "rose" && "text-rose-600 dark:text-rose-400"
+                  )}
+                >
+                  {m.value}
+                </p>
+                <p className="mt-0.5 text-[10px] text-muted-foreground">{m.sub}</p>
+              </div>
+            ))}
+          </div>
+
+          <p className="mt-2.5 border-t border-border/60 pt-2.5 text-[11.5px] leading-relaxed text-muted-foreground">
+            {calc.income.annualCashFlow >= 0 ? (
+              <>
+                At {fmtPct(calc.income.noiYield)} NOI yield vs a {fmtPct(rate, 2)} note,
+                the property carries itself —{" "}
+                <span className="font-semibold text-emerald-600 dark:text-emerald-400">
+                  {fmtCurrency(Math.round(calc.income.annualCashFlow), { compact: true })} / yr
+                </span>{" "}
+                of cash left after the full monthly stack.
+              </>
+            ) : (
+              <>
+                Negative leverage: the {fmtPct(rate, 2)} note outruns the{" "}
+                {fmtPct(calc.income.noiYield)} NOI yield by{" "}
+                <span className="font-semibold text-rose-600 dark:text-rose-400">
+                  {fmtCurrency(Math.round(-calc.income.annualCashFlow), { compact: true })} / yr
+                </span>{" "}
+                — the bet rests on the {fmtPct(calc.cagr)} appreciation engine, not rent.
+              </>
+            )}
+          </p>
+        </div>
+      ) : null}
 
       {/* 2046 equity runway */}
       <div className="mt-3 rounded-lg border border-emerald-500/25 bg-emerald-500/[0.05] p-3.5">

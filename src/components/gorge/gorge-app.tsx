@@ -62,6 +62,33 @@ export function routeKey(route: Route): string {
     : route.view;
 }
 
+/* ---------------------------------------------------------------- */
+/* Hash route as an external store — the hydration-safe way to read  */
+/* window.location.hash. getServerSnapshot renders the overview on   */
+/* the server AND during hydration, so the SSR tree always matches;  */
+/* React then syncs to the client hash without throwing a mismatch.  */
+/* The snapshot is memoized on the raw hash string so it stays        */
+/* referentially stable between calls (a hard React requirement).     */
+/* ---------------------------------------------------------------- */
+
+const SERVER_ROUTE: Route = { view: "overview" };
+let lastHashRaw = "";
+let cachedRoute: Route = SERVER_ROUTE;
+
+function getHashRoute(): Route {
+  const current = window.location.hash;
+  if (current !== lastHashRaw) {
+    lastHashRaw = current;
+    cachedRoute = parseHash(current);
+  }
+  return cachedRoute;
+}
+
+function subscribeHash(cb: () => void): () => void {
+  window.addEventListener("hashchange", cb);
+  return () => window.removeEventListener("hashchange", cb);
+}
+
 export interface GorgeAppProps {
   submarkets: Submarket[];
   listings: PropertyListing[];
@@ -107,27 +134,22 @@ function BackToTop() {
 }
 
 export function GorgeApp({ submarkets, listings, stats }: GorgeAppProps) {
-  const [route, setRoute] = useState<Route>(() =>
-    typeof window === "undefined"
-      ? { view: "overview" }
-      : parseHash(window.location.hash)
-  );
+  const route = useSyncExternalStore(subscribeHash, getHashRoute, () => SERVER_ROUTE);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
 
   useEffect(() => {
-    const onHashChange = () => setRoute(parseHash(window.location.hash));
-    window.addEventListener("hashchange", onHashChange);
     // Normalize an empty hash to "#/" once on mount.
     if (!window.location.hash) window.history.replaceState(null, "", "#/");
-    return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
 
   const navigate: NavigateFn = useCallback((next: Route) => {
+    // Setting the hash fires hashchange → the external store re-parses and
+    // re-renders. Query-only replaceState (share links) deliberately skips
+    // this because parseHash ignores the query — the route is unchanged.
     const hash = routeToHash(next);
     if (window.location.hash !== hash) {
       window.location.hash = hash;
     }
-    setRoute(next);
   }, []);
 
   // Scroll to top whenever the workspace changes.

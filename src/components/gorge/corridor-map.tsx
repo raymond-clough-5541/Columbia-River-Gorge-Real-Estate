@@ -1,10 +1,14 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { Flame, TrendingUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
+  RUNWAY_TIER_STYLES,
   fmtAcres,
   fmtPct,
+  runwayTier,
+  runwayYears,
   type CorridorStats,
   type Submarket,
 } from "@/lib/gorge";
@@ -30,6 +34,20 @@ function tierOf(cagr: number): string {
   if (cagr >= 5.0) return "strong";
   if (cagr >= 4.7) return "moderate";
   return "baseline";
+}
+
+/** Lens of the map: appreciation tiers vs depletion-runway heat. */
+type MapMode = "cagr" | "runway";
+
+const MODES: { id: MapMode; label: string; icon: typeof TrendingUp; hint: string }[] = [
+  { id: "cagr", label: "Appreciation", icon: TrendingUp, hint: "Dot color = 20-yr CAGR tier" },
+  { id: "runway", label: "Land runway", icon: Flame, hint: "Dot color = years of raw land left" },
+];
+
+/** Fill color for a market under the active lens. */
+function dotFill(s: Submarket, mode: MapMode): string {
+  if (mode === "cagr") return TIER_FILL[tierOf(s.projectedCagr)];
+  return RUNWAY_TIER_STYLES[runwayTier(runwayYears(s.depletionYear))].color;
 }
 
 /** Per-slug label placement tweaks so names never collide. */
@@ -60,6 +78,7 @@ export function CorridorMap({
   navigate: NavigateFn;
 }) {
   const [hovered, setHovered] = useState<string | null>(null);
+  const [mode, setMode] = useState<MapMode>("cagr");
 
   const dots = useMemo(
     () =>
@@ -81,16 +100,45 @@ export function CorridorMap({
 
   return (
     <div className="rounded-xl border bg-card p-4 shadow-sm sm:p-6">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
           <MicroLabel>Regional Map Summary</MicroLabel>
           <p className="mt-1 text-sm text-muted-foreground">
-            All 11 jurisdictions · dot size = net buildable acres · color = 20-yr CAGR tier
+            All 11 jurisdictions · dot size = net buildable acres ·{" "}
+            {mode === "cagr"
+              ? "color = 20-yr CAGR tier"
+              : "color = raw-land runway remaining"}
           </p>
         </div>
-        <p className="hidden text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:block">
-          West ⟵ Bonneville · The Dalles ⟶ East
-        </p>
+        {/* Lens toggle — segmented control */}
+        <div
+          role="radiogroup"
+          aria-label="Map color lens"
+          className="flex rounded-lg border bg-background p-0.5"
+        >
+          {MODES.map((m) => {
+            const active = mode === m.id;
+            return (
+              <button
+                key={m.id}
+                type="button"
+                role="radio"
+                aria-checked={active}
+                title={m.hint}
+                onClick={() => setMode(m.id)}
+                className={cn(
+                  "inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-[12px] font-semibold transition-all active:scale-[0.97]",
+                  active
+                    ? "bg-zinc-900 text-white shadow-sm dark:bg-emerald-500 dark:text-zinc-950"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                <m.icon className="h-3.5 w-3.5" aria-hidden />
+                {m.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       <div className="relative overflow-x-auto">
@@ -150,12 +198,14 @@ export function CorridorMap({
             </text>
 
             {/* Market dots */}
-            {dots.map(({ s, px, py, r, tier, label }) => {
+            {dots.map(({ s, px, py, r, label }) => {
               const active = hovered === s.slug;
+              const fill = dotFill(s, mode);
+              const runway = runwayYears(s.depletionYear);
               return (
                 <g
                   key={s.slug}
-                  className="cursor-pointer"
+                  className="cursor-pointer transition-opacity"
                   onClick={() => navigate({ view: "submarket", slug: s.slug })}
                   onMouseEnter={() => setHovered(s.slug)}
                   onMouseLeave={() => setHovered(null)}
@@ -164,11 +214,11 @@ export function CorridorMap({
                 >
                   <circle cx={px} cy={py} r={r + 15} fill="transparent" />
                   {active ? (
-                    <circle cx={px} cy={py} r={r + 9} fill={TIER_FILL[tier]} opacity="0.22" />
+                    <circle cx={px} cy={py} r={r + 9} fill={fill} opacity="0.22" />
                   ) : null}
                   <circle
                     cx={px} cy={py} r={r}
-                    fill={TIER_FILL[tier]}
+                    fill={fill}
                     opacity={active ? 1 : 0.88}
                     className="stroke-white dark:stroke-zinc-950"
                     strokeWidth="2.5"
@@ -184,7 +234,7 @@ export function CorridorMap({
                         : "fill-zinc-500 dark:fill-zinc-300"
                     )}
                   >
-                    {s.name}
+                    {s.slug === "north-bonneville" ? "N. Bonneville" : s.name}
                   </text>
                   <text
                     x={px + label.dx} y={py + label.dy + 16}
@@ -192,7 +242,9 @@ export function CorridorMap({
                     fontSize="12.5"
                     className="fill-zinc-400 dark:fill-zinc-500 tabular-nums"
                   >
-                    {s.state} · {fmtPct(s.projectedCagr)}
+                    {mode === "cagr"
+                      ? `${s.state} · ${fmtPct(s.projectedCagr)}`
+                      : `${s.state} · ${runway} yrs land`}
                   </text>
                 </g>
               );
@@ -222,12 +274,31 @@ export function CorridorMap({
                     {fmtAcres(hoveredDot.netMid)} band
                   </span>
                 </div>
-                <div className="flex justify-between gap-3">
-                  <span className="text-muted-foreground">20-yr CAGR</span>
-                  <span className="font-medium text-emerald-600 dark:text-emerald-400">
-                    {fmtPct(hoveredDot.s.projectedCagr)}
-                  </span>
-                </div>
+                {mode === "cagr" ? (
+                  <div className="flex justify-between gap-3">
+                    <span className="text-muted-foreground">20-yr CAGR</span>
+                    <span className="font-medium text-emerald-600 dark:text-emerald-400">
+                      {fmtPct(hoveredDot.s.projectedCagr)}
+                    </span>
+                  </div>
+                ) : (
+                  <div className="flex justify-between gap-3">
+                    <span className="text-muted-foreground">Land runway</span>
+                    <span
+                      className="font-medium"
+                      style={{
+                        color: RUNWAY_TIER_STYLES[
+                          runwayTier(runwayYears(hoveredDot.s.depletionYear))
+                        ].color,
+                      }}
+                    >
+                      {runwayYears(hoveredDot.s.depletionYear)} yrs ·{" "}
+                      {RUNWAY_TIER_STYLES[
+                        runwayTier(runwayYears(hoveredDot.s.depletionYear))
+                      ].label.toLowerCase()}
+                    </span>
+                  </div>
+                )}
                 <div className="flex justify-between gap-3">
                   <span className="text-muted-foreground">Depletion</span>
                   <span className="font-medium">{hoveredDot.s.depletionYear}</span>
@@ -243,25 +314,68 @@ export function CorridorMap({
 
       {/* Legend + OR/WA split */}
       <div className="mt-4 flex flex-col gap-4 border-t pt-4 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-[11px] text-muted-foreground">
-          {(
-            [
-              ["elite", "≥ 5.5% CAGR"],
-              ["strong", "5.0–5.5%"],
-              ["moderate", "4.7–5.0%"],
-              ["baseline", "< 4.7%"],
-            ] as const
-          ).map(([tier, text]) => (
-            <span key={tier} className="inline-flex items-center gap-1.5">
-              <span
-                className="h-2.5 w-2.5 rounded-full"
-                style={{ backgroundColor: TIER_FILL[tier] }}
-                aria-hidden
-              />
-              {text}
-            </span>
-          ))}
-        </div>
+        {mode === "cagr" ? (
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-[11px] text-muted-foreground">
+            {(
+              [
+                ["elite", "≥ 5.5% CAGR"],
+                ["strong", "5.0–5.5%"],
+                ["moderate", "4.7–5.0%"],
+                ["baseline", "< 4.7%"],
+              ] as const
+            ).map(([tier, text]) => (
+              <span key={tier} className="inline-flex items-center gap-1.5">
+                <span
+                  className="h-2.5 w-2.5 rounded-full"
+                  style={{ backgroundColor: TIER_FILL[tier] }}
+                  aria-hidden
+                />
+                {text}
+              </span>
+            ))}
+          </div>
+        ) : (
+          <div className="min-w-0 flex-1 max-w-md" aria-label="Runway heat legend">
+            <div className="mb-1 flex items-baseline justify-between text-[10.5px] font-medium uppercase tracking-wider text-muted-foreground">
+              <span>Raw-land runway heat</span>
+              <span className="tabular-nums normal-case tracking-normal">
+                6 → 12 years left
+              </span>
+            </div>
+            <div className="flex h-2.5 overflow-hidden rounded-full border">
+              {(Object.keys(RUNWAY_TIER_STYLES) as (keyof typeof RUNWAY_TIER_STYLES)[]).map(
+                (k) => (
+                  <div
+                    key={k}
+                    className="h-full flex-1"
+                    style={{
+                      backgroundColor: `${RUNWAY_TIER_STYLES[k].color}cc`,
+                    }}
+                    title={`${RUNWAY_TIER_STYLES[k].years} · ${RUNWAY_TIER_STYLES[k].label}`}
+                  />
+                )
+              )}
+            </div>
+            <div className="mt-1 flex justify-between text-[10.5px] text-muted-foreground">
+              {(Object.keys(RUNWAY_TIER_STYLES) as (keyof typeof RUNWAY_TIER_STYLES)[]).map(
+                (k) => (
+                  <span
+                    key={k}
+                    className="inline-flex items-center gap-1"
+                    title={`${RUNWAY_TIER_STYLES[k].years} · ${RUNWAY_TIER_STYLES[k].label}`}
+                  >
+                    <span
+                      className="h-2 w-2 rounded-full"
+                      style={{ backgroundColor: RUNWAY_TIER_STYLES[k].color }}
+                      aria-hidden
+                    />
+                    {RUNWAY_TIER_STYLES[k].label}
+                  </span>
+                )
+              )}
+            </div>
+          </div>
+        )}
 
         <div className="w-full max-w-sm">
           <div className="mb-1.5 flex items-center justify-between text-[11px] text-muted-foreground">

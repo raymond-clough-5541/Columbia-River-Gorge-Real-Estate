@@ -254,6 +254,110 @@ export function cagrTier(cagr: number): CagrTier {
   return "baseline";
 }
 
+/* ------------------------------------------------------------------ */
+/* Depletion-runway heat scale (corridor map "runway" lens)            */
+/* ------------------------------------------------------------------ */
+
+export type RunwayTier = "critical" | "tight" | "moderate" | "ample";
+
+/** Years of raw-land runway remaining from the 2026 baseline. */
+export function runwayYears(depletionYear: number, startYear = 2026): number {
+  return depletionYear - startYear;
+}
+
+export function runwayTier(years: number): RunwayTier {
+  if (years <= 7) return "critical";
+  if (years <= 9) return "tight";
+  if (years <= 11) return "moderate";
+  return "ample";
+}
+
+export const RUNWAY_TIER_STYLES: Record<
+  RunwayTier,
+  { label: string; years: string; color: string }
+> = {
+  critical: { label: "Critical", years: "≤ 7 yrs", color: "#f43f5e" },
+  tight: { label: "Tightening", years: "8–9 yrs", color: "#fb923c" },
+  moderate: { label: "Moderate", years: "10–11 yrs", color: "#f59e0b" },
+  ample: { label: "Ample", years: "12+ yrs", color: "#10b981" },
+};
+
+/* ------------------------------------------------------------------ */
+/* Comparable-market matching (submarket profiles)                     */
+/* ------------------------------------------------------------------ */
+
+/** Net-buildable band midpoint of a submarket. */
+export function netBuildableMid(s: Submarket): number {
+  return (s.netBuildableAcresMin + s.netBuildableAcresMax) / 2;
+}
+
+/**
+ * Rank the corridor's other micro-markets by structural similarity to the
+ * target: 45% CAGR proximity, 25% baseline-price proximity, 15% land-supply
+ * proximity, 15% depletion-runway proximity — all distance-normalized so no
+ * single axis dominates. Returns the top `count` matches, best first.
+ */
+export function findComparableMarkets(
+  target: Submarket,
+  all: Submarket[],
+  count = 3
+): Submarket[] {
+  const tNet = netBuildableMid(target);
+  const scored = all
+    .filter((s) => s.id !== target.id)
+    .map((s) => {
+      const dCagr = Math.abs(s.projectedCagr - target.projectedCagr) / 1.2;
+      const dPrice = Math.abs(s.baselinePrice2026 - target.baselinePrice2026) / 180_000;
+      const dNet = Math.abs(netBuildableMid(s) - tNet) / 110;
+      const dRunway = Math.abs(s.depletionYear - target.depletionYear) / 5;
+      const distance = 0.45 * dCagr + 0.25 * dPrice + 0.15 * dNet + 0.15 * dRunway;
+      return { s, score: 1 / (1 + distance) };
+    })
+    .sort((a, b) => b.score - a.score);
+  return scored.slice(0, count).map((x) => x.s);
+}
+
+/* ------------------------------------------------------------------ */
+/* Rental-yield heuristics (Financing Lab income lens)                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Estimated market rent for a listing, before the investor's own
+ * conservative/aggro haircut. Gorge-rate heuristics by product type:
+ * single-family leases carry a tourism-adjacent premium, multi-family
+ * pencils thinner, and farm estates stack an agricultural ground-lease
+ * on the unimproved acreage.
+ */
+export function estimateMarketRent(listing: {
+  propertyType: PropertyType | string;
+  squareFeet: number;
+  acreage: number;
+}): { dwelling: number; agriculture: number; note: string } {
+  const sqft = Math.max(0, listing.squareFeet);
+  if (listing.propertyType === "Land Parcel" || sqft === 0) {
+    return { dwelling: 0, agriculture: 0, note: "unimproved land — no income until entitlement" };
+  }
+  const perSqft =
+    listing.propertyType === "Infill Multi-Family"
+      ? 1.05
+      : listing.propertyType === "Luxury Agricultural/Farm Estate"
+        ? 1.1
+        : 1.35;
+  const dwelling = sqft * perSqft;
+  const agriculture =
+    listing.propertyType === "Luxury Agricultural/Farm Estate" && listing.acreage > 2
+      ? listing.acreage * 150 / 12 // pasture/vineyard ground-lease at ~$150/ac/yr
+      : 0;
+  return {
+    dwelling: Math.round(dwelling),
+    agriculture: Math.round(agriculture),
+    note: `${perSqft.toFixed(2)}/sqft/mo blend${agriculture > 0 ? " + ag ground-lease" : ""}`,
+  };
+}
+
+/** Operating reserve haircut applied to gross rent for NOI: vacancy + maintenance + management. */
+export const RENTAL_RESERVE_RATE = 0.08;
+
 export const CAGR_TIER_STYLES: Record<
   CagrTier,
   { label: string; className: string }

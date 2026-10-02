@@ -14,19 +14,26 @@ import {
 } from "recharts";
 import {
   ArrowLeft,
+  ArrowRight,
   Building2,
   Droplets,
   Flame,
   LandPlot,
   Recycle,
   Table2,
+  TrendingDown,
+  TrendingUp,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import {
   fmtAcres,
   fmtCurrency,
   fmtPct,
+  findComparableMarkets,
   futureValue,
+  netBuildableMid,
+  runwayYears,
   type PropertyListing,
   type Submarket,
 } from "@/lib/gorge";
@@ -44,6 +51,40 @@ import { ListingDialog } from "./listing-dialog";
 
 const START_YEAR = 2026;
 const HORIZON = 20;
+
+/** Signed delta chip: emerald when the comparable is richer, zinc when leaner. */
+function DeltaChip({
+  label,
+  delta,
+  format,
+  invert = false,
+}: {
+  label: string;
+  delta: number;
+  format: (v: number) => string;
+  /** For metrics where "higher is worse" (e.g. price when buying) — flips the color logic. */
+  invert?: boolean;
+}) {
+  const flat = Math.abs(delta) < 0.05;
+  const good = invert ? delta < 0 : delta > 0;
+  const Icon = delta >= 0 ? TrendingUp : TrendingDown;
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 rounded-sm border px-1.5 py-0.5 text-[10.5px] font-semibold tabular-nums",
+        flat
+          ? "border-zinc-500/25 bg-zinc-500/10 text-zinc-600 dark:text-zinc-300"
+          : good
+            ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+            : "border-rose-500/25 bg-rose-500/10 text-rose-600 dark:text-rose-400"
+      )}
+      title={`${label} vs ${format(Math.abs(delta))} ${delta >= 0 ? "higher" : "lower"}`}
+    >
+      {flat ? null : <Icon className="h-2.5 w-2.5" aria-hidden />}
+      {format(delta)}
+    </span>
+  );
+}
 
 export function SubmarketDetailView({
   slug,
@@ -355,6 +396,91 @@ export function SubmarketDetailView({
           </div>
         </div>
       </div>
+
+      {/* Comparable micro-markets — structural peers for cross-shopping */}
+      <section className="mt-10">
+        <div className="mb-4">
+          <MicroLabel>Comparable Micro-Markets</MicroLabel>
+          <h2 className="mt-1.5 text-xl font-semibold tracking-tight sm:text-2xl">
+            Structural peers across the corridor
+          </h2>
+          <p className="mt-1.5 max-w-2xl text-[13.5px] leading-relaxed text-muted-foreground">
+            Ranked by proximity on the four structural axes that drive this
+            ledger — appreciation rate (45%), baseline price (25%), land
+            supply (15%), and depletion runway (15%). Deltas are shown
+            against {market.name}.
+          </p>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          {findComparableMarkets(market, submarkets, 3).map((peer, i) => {
+            const dCagr = peer.projectedCagr - market.projectedCagr;
+            const dPrice = peer.baselinePrice2026 - market.baselinePrice2026;
+            const dNet = netBuildableMid(peer) - netBuildableMid(market);
+            const dRunway = runwayYears(peer.depletionYear) - runwayYears(market.depletionYear);
+            return (
+              <button
+                key={peer.id}
+                type="button"
+                onClick={() => navigate({ view: "submarket", slug: peer.slug })}
+                className="group flex flex-col rounded-xl border bg-card p-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-zinc-400 hover:shadow-md dark:hover:border-zinc-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60"
+                aria-label={`Open the ${peer.name}, ${peer.state} profile`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="flex items-center gap-2 text-[15px] font-semibold tracking-tight">
+                      {peer.name}
+                      <StateBadge state={peer.state} />
+                    </p>
+                    <p className="mt-1 text-[12px] text-muted-foreground">
+                      {peer.county} · {peer.jurisdictionType}
+                    </p>
+                  </div>
+                  <span className="inline-flex h-6 items-center gap-1 rounded-sm bg-muted px-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                    #{i + 1} match
+                  </span>
+                </div>
+
+                <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                  <DeltaChip
+                    label="20-yr CAGR"
+                    delta={dCagr}
+                    format={(v) => `${v >= 0 ? "+" : "−"}${fmtPct(Math.abs(v))}`}
+                  />
+                  <DeltaChip
+                    label="Baseline price"
+                    delta={dPrice}
+                    invert
+                    format={(v) =>
+                      `${v >= 0 ? "+" : "−"}${fmtCurrency(Math.abs(v), { compact: true })}`
+                    }
+                  />
+                  <DeltaChip
+                    label="Net buildable"
+                    delta={dNet}
+                    format={(v) => `${v >= 0 ? "+" : "−"}${Math.round(Math.abs(v))} ac`}
+                  />
+                  <DeltaChip
+                    label="Land runway"
+                    delta={dRunway}
+                    format={(v) => `${v >= 0 ? "+" : "−"}${Math.abs(v)} yr`}
+                  />
+                </div>
+
+                <div className="mt-3.5 flex items-center justify-between border-t pt-3">
+                  <span className="text-[11.5px] text-muted-foreground tabular-nums">
+                    {fmtCurrency(peer.baselinePrice2026, { compact: true })} base ·{" "}
+                    {fmtPct(peer.projectedCagr)} CAGR
+                  </span>
+                  <span className="inline-flex items-center gap-1 text-[11.5px] font-semibold text-muted-foreground transition-colors group-hover:text-emerald-600 dark:group-hover:text-emerald-400">
+                    Open profile
+                    <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" aria-hidden />
+                  </span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </section>
 
       {/* Listings */}
       <section className="mt-12">
