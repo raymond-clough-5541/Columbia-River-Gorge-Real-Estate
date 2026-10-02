@@ -93,6 +93,61 @@ public/images/              AI-generated corridor & property imagery
 - Editorial-financial aesthetic: slate/zinc palette, emerald appreciation accents, tabular numerals, subtle borders, responsive tables
 - Dark/light mode via next-themes
 
+## Git hooks, CI & the push pipeline
+
+The repo protects itself with a three-sided enforcement stack (full
+post-mortem + arming ladder: **[docs/GIT-HOOKS.md](docs/GIT-HOOKS.md)**):
+
+| Where | Gate |
+| --- | --- |
+| `pre-commit` (local) | secret scan of staged changes (gitleaks w/ grep fallback) + ESLint on staged source files |
+| `commit-msg` (local) | specific-subject hygiene gate |
+| `post-commit` (local) | **auto-push of `main` to `github` + `origin`** (PAT self-heal + non-ff recovery) |
+| `.github/workflows/ci.yml` (GitHub) | ESLint + `tsc --noEmit` + gitleaks full-history scan on every push/PR |
+
+The hooks **arm automatically**: `bun install` runs the `prepare` script →
+`git config core.hooksPath scripts/git-hooks`. Verify any time:
+
+```bash
+git config --get core.hooksPath   # → scripts/git-hooks
+```
+
+A WIP checkpoint daemon (`bun run checkpoint:start`) commits work
+continuously (quiet-window + 10-min max-age) through the same gates.
+
+## Redeploying (any fresh sandbox)
+
+```bash
+bash scripts/redeploy.sh              # pull + install + hooks + db + dev + verify
+PAT=<token> bash scripts/redeploy.sh --fresh   # brand-new sandbox bootstrap
+```
+
+The full environment contract — rollback playbook, self-healing PAT
+drop-file (`upload/GITHUB-PAT.txt`), remote realignment — lives in
+**[docs/REDEPLOY.md](docs/REDEPLOY.md)**; the copy-paste AI bootstrap
+prompt (PAT in redaction-proof base64) in
+**[docs/REDEPLOY-PROMPT.md](docs/REDEPLOY-PROMPT.md)**; and the universal
+fill-in template for any full-stack Z.ai session in
+**[docs/prompts/FULLSTACK-SESSION-TEMPLATE.md](docs/prompts/FULLSTACK-SESSION-TEMPLATE.md)**.
+
+## Audits
+
+- **UI/design + a11y**: `.github/workflows/ui-audit.yml` (boots the app,
+  agent-browser + axe-core + Core Web Vitals; rubric:
+  bergside/awesome-design-skills + ibelick/ui-skills)
+- **Backend security**: `.github/workflows/security-audit.yml` (gitleaks
+  full-history, `bun audit`, semgrep; rubric:
+  cloudflare/security-audit-skill; weekly drift cron)
+- **The AI-session half** of both audits (judgment, per-surface grading,
+  remediation order, committed reports with receipts):
+  **[docs/prompts/AUDIT-REDEPLOY-PROMPT.md](docs/prompts/AUDIT-REDEPLOY-PROMPT.md)**
+
+## Roadmap — PNW → USA → Canada
+
+The multi-market expansion plan (single codebase / one site per market
+region / region-registry data model; the per-market launch runbook):
+**[docs/EXPANSION-PLAN.md](docs/EXPANSION-PLAN.md)**.
+
 ## Disclaimer
 
 Analytical illustrations compiled from public CRGNSA land-use records and corridor market surveys. Projections apply FV = PV·(1+r)ⁿ to baseline bands and are not investment advice. Verify entitlements, water rights, and tax positions with counsel before transacting.

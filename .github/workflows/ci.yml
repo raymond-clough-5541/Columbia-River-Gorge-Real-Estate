@@ -1,0 +1,46 @@
+# CI — the server-side half of the enforcement stack.
+#
+# Local git hooks protect the author's machine; ONLY GitHub protects the
+# repo (hooks are local-only by design — see docs/GIT-HOOKS.md Part 4).
+# Gate on every push + PR: ESLint, TypeScript strict check, gitleaks
+# full-history secret scan (respects .gitleaks.toml).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  quality:
+    name: Lint + typecheck + secret scan
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: "file:../db/custom.db"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history for gitleaks
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Prisma client
+        run: bunx prisma generate
+
+      - name: ESLint
+        run: bun run lint
+
+      - name: TypeScript (strict, no emit)
+        run: bunx tsc --noEmit
+
+      - name: gitleaks (secret scan, full history)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

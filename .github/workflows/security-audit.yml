@@ -1,0 +1,95 @@
+# Security Audit — the deterministic half of the backend security audit.
+#
+# Pairs with docs/prompts/AUDIT-REDEPLOY-PROMPT.md (the AI-session half —
+# API-surface judgment, RLS verification, remediation order). This workflow:
+#   1. gitleaks full-history secret scan (respects .gitleaks.toml)
+#   2. dependency audit (bun audit)
+#   3. semgrep static analysis (typescript + secrets rulesets)
+#   4. stages cloudflare/security-audit-skill as the methodology rubric
+#   5. summarizes findings into the run summary + artifacts
+#
+# Trigger: Actions tab → "Run workflow", or:
+#   gh workflow run security-audit.yml --repo KeyWolfpack/fsbo --ref main
+# Also self-runs weekly (Mondays 06:00 UTC) for drift detection.
+name: Security Audit
+
+on:
+  workflow_dispatch:
+    inputs:
+      note:
+        description: "Audit note (round / trigger reason)"
+        required: false
+        default: "manual security audit"
+  schedule:
+    - cron: "0 6 * * 1"
+
+jobs:
+  security-audit:
+    name: Secrets + dependencies + static analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history for gitleaks
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: gitleaks (full-history secret scan)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Dependency audit (bun audit)
+        continue-on-error: true # advisory — findings summarized, not gating
+        run: |
+          bun audit 2>&1 | tee dependency-audit.txt || true
+
+      - name: Semgrep (typescript + secrets rulesets)
+        continue-on-error: true # advisory
+        run: |
+          pip install semgrep
+          semgrep scan --config p/typescript --config p/secrets \
+            --json --output semgrep.json --error || true
+          semgrep scan --config p/typescript --config p/secrets || true
+
+      - name: Stage the security-audit-skill rubric
+        run: |
+          mkdir -p .audit-skills
+          git clone --depth 1 https://github.com/cloudflare/security-audit-skill.git .audit-skills/security-audit-skill
+          echo "## Rubric staged: cloudflare/security-audit-skill" >> "$GITHUB_STEP_SUMMARY"
+          echo "$(find .audit-skills/security-audit-skill -name '*.md' | wc -l) markdown rubric files — see artifact" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Summarize
+        if: always()
+        run: |
+          {
+            echo "## Security Audit — deterministic receipts"
+            echo
+            echo "Note: ${{ github.event.inputs.note }}"
+            echo
+            echo "- gitleaks: full-history scan (allowlist: the two deliberate PAT carriers — see docs/GIT-HOOKS.md Part 5)"
+            echo "- bun audit + semgrep: advisory findings above/below"
+            echo "- The judgment half (API surface, RLS verification, headers, remediation):"
+            echo "  run docs/prompts/AUDIT-REDEPLOY-PROMPT.md in a live session"
+            echo
+            echo "### Dependency audit"
+            echo '```'
+            [ -f dependency-audit.txt ] && tail -30 dependency-audit.txt || echo "(no output)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload audit artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-audit-${{ github.run_number }}
+          path: |
+            dependency-audit.txt
+            semgrep.json
+          retention-days: 90
+          if-no-files-found: ignore

@@ -1,0 +1,123 @@
+# UI Audit — the deterministic half of the design/accessibility audit.
+#
+# Pairs with docs/prompts/AUDIT-REDEPLOY-PROMPT.md (the AI-session half —
+# judgment calls, per-surface grading, remediation order). This workflow:
+#   1. boots the app on the runner (dev server, committed SQLite data)
+#   2. walks the 5 hash-fragment workspaces with agent-browser
+#   3. runs axe-core a11y audits + screenshots + Core Web Vitals
+#   4. stages the two design-skill repos as the rubric context
+#   5. uploads everything as an artifact
+#
+# Trigger: Actions tab → "Run workflow", or:
+#   gh workflow run ui-audit.yml --repo KeyWolfpack/fsbo --ref main
+name: UI Audit
+
+on:
+  workflow_dispatch:
+    inputs:
+      note:
+        description: "Audit note (round / trigger reason)"
+        required: false
+        default: "manual UI audit"
+
+jobs:
+  ui-audit:
+    name: Live UI + a11y audit (agent-browser)
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: "file:../db/custom.db"
+      NODE_OPTIONS: "--max-old-space-size=2048"
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Prisma client
+        run: bunx prisma generate
+
+      - name: Stage the design-skill rubrics
+        run: |
+          mkdir -p .audit-skills
+          git clone --depth 1 https://github.com/bergside/awesome-design-skills.git .audit-skills/awesome-design-skills
+          git clone --depth 1 https://github.com/ibelick/ui-skills.git .audit-skills/ui-skills
+          echo "## Rubric sources staged" >> "$GITHUB_STEP_SUMMARY"
+          echo "- bergside/awesome-design-skills: $(find .audit-skills/awesome-design-skills -name '*.md' | wc -l) markdown files" >> "$GITHUB_STEP_SUMMARY"
+          echo "- ibelick/ui-skills: $(find .audit-skills/ui-skills -name '*.md' | wc -l) markdown files" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Boot the app (dev server)
+        run: |
+          nohup node node_modules/.bin/next dev -p 3000 > dev.log 2>&1 &
+          for i in $(seq 1 40); do
+            if curl -sf http://localhost:3000/api/stats > /dev/null; then
+              echo "app is up"; exit 0
+            fi
+            sleep 3
+          done
+          echo "::error::app failed to boot — dev.log tail:"; tail -40 dev.log; exit 1
+
+      - name: Install agent-browser
+        run: |
+          npm install -g agent-browser
+          agent-browser install
+
+      - name: Walk the workspaces (screenshots + a11y + vitals)
+        continue-on-error: true
+        run: |
+          mkdir -p audit-out
+          agent-browser open http://localhost:3000/ && agent-browser wait 3000
+          agent-browser screenshot audit-out/01-overview.png
+          agent-browser a11y http://localhost:3000/ --json > audit-out/a11y-overview.json || true
+
+          agent-browser open "http://localhost:3000/#/matrix" && agent-browser wait 2000
+          agent-browser screenshot audit-out/02-matrix.png
+          agent-browser a11y "http://localhost:3000/#/matrix" --json > audit-out/a11y-matrix.json || true
+
+          agent-browser open "http://localhost:3000/#/projections" && agent-browser wait 2000
+          agent-browser screenshot audit-out/03-projections.png
+
+          agent-browser open "http://localhost:3000/#/listings" && agent-browser wait 2000
+          agent-browser screenshot audit-out/04-listings.png
+          agent-browser a11y "http://localhost:3000/#/listings" --json > audit-out/a11y-listings.json || true
+
+          agent-browser open "http://localhost:3000/#/submarket/dallesport" && agent-browser wait 1500
+          agent-browser screenshot audit-out/05-submarket.png
+
+          agent-browser set viewport 390 844
+          agent-browser open http://localhost:3000/ && agent-browser wait 2500
+          agent-browser screenshot audit-out/06-mobile-390.png
+
+          agent-browser vitals http://localhost:3000/ --json > audit-out/vitals.json || true
+          agent-browser errors > audit-out/page-errors.txt || true
+          agent-browser console > audit-out/console.txt || true
+
+      - name: Summarize
+        if: always()
+        run: |
+          {
+            echo "## UI Audit — deterministic receipts"
+            echo
+            echo "Note: ${{ github.event.inputs.note }}"
+            echo
+            echo "- Screenshots + axe-core JSON + Core Web Vitals: see the run artifact"
+            echo "- The rubric (staged): bergside/awesome-design-skills, ibelick/ui-skills"
+            echo "- The judgment half (per-surface grading, findings, remediation):"
+            echo "  run docs/prompts/AUDIT-REDEPLOY-PROMPT.md in a live session"
+            echo
+            if [ -f audit-out/page-errors.txt ]; then
+              echo "### Page errors (must be empty)"; echo '```'; cat audit-out/page-errors.txt; echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload audit artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-audit-${{ github.run_number }}
+          path: audit-out/
+          retention-days: 90
