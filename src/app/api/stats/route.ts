@@ -1,84 +1,63 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import {
+  computeRegionStats,
+  DEFAULT_REGION_SLUG,
+  type JurisdictionType,
+  type StateCode,
+  type Submarket,
+} from "@/lib/gorge";
 
 export const dynamic = "force-dynamic";
 
-// GET /api/stats — corridor-level aggregates for the executive dashboard
-export async function GET() {
+// GET /api/stats — regional aggregates for the executive dashboard.
+// Query params: region (slug — scopes to a registry region; default the
+// corridor, which also inherits legacy unattached rows).
+export async function GET(req: NextRequest) {
   try {
-    const submarkets = await db.submarket.findMany();
-    const listingCount = await db.propertyListing.count();
+    const { searchParams } = new URL(req.url);
+    const region = searchParams.get("region") ?? DEFAULT_REGION_SLUG;
 
-    if (submarkets.length === 0) {
-      return NextResponse.json({
-        data: {
-          submarketCount: 0,
-          listingCount: 0,
-          totalNetBuildableMid: 0,
-          totalGrossVacant: 0,
-          regionalMedianPrice: 0,
-          averageCagr: 0,
-          earliestDepletion: null,
-          latestDepletion: null,
-        },
-      });
-    }
+    const regionRow = await db.region.findUnique({
+      where: { slug: region },
+      select: { id: true, slug: true },
+    });
 
-    const netMid = submarkets.map(
-      (s) => (s.netBuildableAcresMin + s.netBuildableAcresMax) / 2
-    );
-    const totalNetBuildableMid = netMid.reduce((a, b) => a + b, 0);
-    const totalGrossVacant = submarkets.reduce(
-      (a, s) => a + s.grossVacantAcres,
-      0
-    );
+    // Unknown region slug → empty ledger, not a blended one.
+    const submarketRows = regionRow
+      ? await db.submarket.findMany({
+          where:
+            region === DEFAULT_REGION_SLUG
+              ? { OR: [{ regionId: regionRow.id }, { regionId: null }] }
+              : { regionId: regionRow.id },
+        })
+      : [];
+    const submarkets: Submarket[] = submarketRows.map((s) => ({
+      ...s,
+      state: s.state as StateCode,
+      jurisdictionType: s.jurisdictionType as JurisdictionType,
+    }));
 
-    const baselines = submarkets
-      .map((s) => s.baselinePrice2026)
-      .sort((a, b) => a - b);
-    const mid = Math.floor(baselines.length / 2);
-    const regionalMedianPrice =
-      baselines.length % 2 === 0
-        ? (baselines[mid - 1] + baselines[mid]) / 2
-        : baselines[mid];
-
-    const averageCagr =
-      submarkets.reduce((a, s) => a + s.projectedCagr, 0) / submarkets.length;
-
-    const depletionYears = submarkets
-      .map((s) => s.depletionYear)
-      .sort((a, b) => a - b);
+    const listingCount = regionRow
+      ? await db.propertyListing.count({
+          where:
+            region === DEFAULT_REGION_SLUG
+              ? {
+                  submarket: {
+                    OR: [{ regionId: regionRow.id }, { regionId: null }],
+                  },
+                }
+              : { submarket: { regionId: regionRow.id } },
+        })
+      : 0;
 
     return NextResponse.json({
-      data: {
-        submarketCount: submarkets.length,
-        listingCount,
-        totalNetBuildableMid: Math.round(totalNetBuildableMid),
-        totalNetBuildableMin: submarkets.reduce(
-          (a, s) => a + s.netBuildableAcresMin,
-          0
-        ),
-        totalNetBuildableMax: submarkets.reduce(
-          (a, s) => a + s.netBuildableAcresMax,
-          0
-        ),
-        totalGrossVacant: Math.round(totalGrossVacant),
-        regionalMedianPrice,
-        averageCagr,
-        earliestDepletion: depletionYears[0],
-        latestDepletion: depletionYears[depletionYears.length - 1],
-        orNetBuildable: submarkets
-          .filter((s) => s.state === "OR")
-          .reduce((a, s) => a + (s.netBuildableAcresMin + s.netBuildableAcresMax) / 2, 0),
-        waNetBuildable: submarkets
-          .filter((s) => s.state === "WA")
-          .reduce((a, s) => a + (s.netBuildableAcresMin + s.netBuildableAcresMax) / 2, 0),
-      },
+      data: computeRegionStats(submarkets, listingCount),
     });
   } catch (err) {
     console.error("GET /api/stats failed:", err);
     return NextResponse.json(
-      { error: "Failed to load corridor stats" },
+      { error: "Failed to load regional stats" },
       { status: 500 }
     );
   }

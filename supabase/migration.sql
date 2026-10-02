@@ -44,8 +44,8 @@ create table if not exists public.submarkets (
   name                  text not null,
   state                 text not null check (state in ('OR','WA')),
   county                text not null,
-  jurisdiction_type     text not null check (jurisdiction_type in ('Incorporated City','Unincorporated Urban Area')),
-  regulatory_framework  text not null check (regulatory_framework in ('Goal 14 UGB','GMA UGA / Partial Planning','GMA UGA / Full Planning')),
+  jurisdiction_type     text not null check (jurisdiction_type in ('Incorporated City','Unincorporated Urban Area','Unincorporated Rural Area')),
+  regulatory_framework  text not null check (regulatory_framework in ('Goal 14 UGB','GMA UGA / Partial Planning','GMA UGA / Full Planning','GMA City / Winslow Growth Center','GMA Rural Area / No UGA','GMA City / Ridge PUD','GMA City / Fully-Built UGA','GMA City / Central Issaquah Plan','GMA City / 185th Station Area')),
   total_footprint_acres numeric not null,
   gross_vacant_acres    numeric not null,
   net_buildable_acres_min numeric not null,
@@ -159,11 +159,11 @@ insert into public.regions (
    'The proving ground. The Columbia River Gorge National Scenic Area Act of 1986 created the country''s first national-scenic-area land-use regime: a federally-appointed Commission reviewing development across 292,600 acres, layered over Oregon''s Goal 14 urban growth boundaries on the south bank and Washington''s Growth Management Act urban growth areas on the north bank.',
    'Oregon''s progressive income tax (to 9.9%) vs Washington''s zero personal income tax — cross-river commuting pairs quantify the spread.',
    11, 0, '2026-01-15T00:00:00Z'),
-  ('puget-sound', 'Puget Sound I-5 Corridor', 'USA', 'WA', 'pnw', 'scaffold',
-   'The original UGB scarcity market: Snohomish–King–Pierce urban growth areas pressed against the GMA''s firmest lines.',
-   'The Growth Management Act''s flagship theater — king-county UGAs, forestland-of-statewide-significance buffers, and shoreline designations squeezing the I-5 corridor''s buildable envelopes.',
-   'WA 0% income tax vs OR 9.9% — the mirror image of the Gorge story for Seattle-wage earners choosing residency.',
-   14, 1, null),
+  ('puget-sound', 'Puget Sound I-5 Corridor', 'USA', 'WA', 'pnw', 'live',
+   'The original UGB scarcity market: island cities, plateau enclaves, and mountain-walled UGAs pressed against the GMA''s firmest lines in King and Kitsap counties.',
+   'The Growth Management Act''s flagship theater — six boundary-trapped micro-markets spanning a sole-source-aquifer island city (Bainbridge), a no-UGA rural island (Vashon), a floodplain-walled Ridge city (Snoqualmie), a fully-built plateau (Sammamish), an Issaquah-Alps-walled valley city, and a light-rail TOD inner ring (Shoreline).',
+   'WA 0% personal income tax vs CA''s 13.3% top bracket — the equity-exodus arbitrage that prices King County land, captured at ferry-commute and I-90 distance from Seattle wages.',
+   14, 1, '2026-10-02T00:00:00Z'),
   ('willamette-valley', 'Willamette Valley', 'USA', 'OR', 'pnw', 'scaffold',
    'Oregon Goal 14 at metro scale — Portland UGB reserves, Salem, Corvallis, Eugene inside the nation''s oldest statewide growth boundary system.',
    'The Gorge''s big sibling. Senate Bill 100 (1973) gave every Oregon city an urban growth boundary and rural lands exclusive-farm-use zoning.',
@@ -262,7 +262,41 @@ insert into public.submarkets (
 
 -- Attach every corridor micro-market to the live CRGNSA region.
 update public.submarkets
-set region_id = (select id from public.regions where slug = 'columbia-river-gorge');
+set region_id = (select id from public.regions where slug = 'columbia-river-gorge')
+where region_id is null and slug not in
+  ('bainbridge-island','vashon-island','snoqualmie','sammamish','issaquah','shoreline');
+
+-- ---------------------------------------------------------------------
+-- Round 15 — the Puget Sound ledger: the first live PNW region. Six
+-- boundary-trapped King + Kitsap micro-markets + eight listings.
+-- ---------------------------------------------------------------------
+insert into public.submarkets (
+  id, slug, name, state, county, jurisdictionType, regulatoryFramework, totalFootprintAcres, grossVacantAcres, netBuildableAcresMin, netBuildableAcresMax, baselinePrice2026, pricePerSqftMin, pricePerSqftMax, daysOnMarketMin, daysOnMarketMax, projectedCagr, projectedPrice2046Min, projectedPrice2046Max, waterPurveyor, wastewaterSystem, primaryConstraints, summaryNarrative, depletionYear, mapX, mapY, createdAt
+) values
+  ('a1000000-0000-4000-8000-000000000001', 'bainbridge-island', 'Bainbridge Island', 'WA', 'Kitsap County', 'Incorporated City', 'GMA City / Winslow Growth Center', 1150, 260, 90, 120, 1450000, 610, 705, 12, 28, 5.2, 3700000, 4300000, 'City of Bainbridge Island Utilities (sole-source island aquifer, 7 production wells)', 'Winslow WWTP (capacity-limited) + widespread on-site septic outside Winslow', 'Sole-source island aquifer with declining static levels; salmon-bearing stream CAOs; SMA shoreline designations on 75% of perimeter; 35-min ferry capacity ceiling; tree canopy retention code.', 'A 35-minute ferry from Seattle''s core, entirely incorporated since 1991 — the island IS the city, and its UGA can never expand. King-County-caliber wages meet a fixed 90–120-acre net-buildable band over a sole-source aquifer.', 2036, 30, 26, '2026-10-02T00:00:00Z'),
+  ('a1000000-0000-4000-8000-000000000002', 'vashon-island', 'Vashon Island', 'WA', 'King County', 'Unincorporated Rural Area', 'GMA Rural Area / No UGA', 580, 130, 40, 55, 925000, 385, 445, 20, 45, 5.0, 2280000, 2620000, 'Private wells only (Vashon-Maury sole-source aquifer, Stage 1 GWMA advisory)', 'On-site septic only — no municipal sewer on the island', 'No UGA exists — rural densities locked by the King County Comprehensive Plan (1 dwelling / 10–20 ac typical); sole-source aquifer; septic-only buildout; ferry-dependent (Fauntleroy + Southworth); forest retention standards.', 'The terminal scarcity case: a King County island with NO urban growth area, where the GMA''s rural designation caps new lots at one per 10–20 acres and both water and sewer are private. The 40–55-acre net band is lot-split remnants.', 2035, 30, 63, '2026-10-02T00:00:00Z'),
+  ('a1000000-0000-4000-8000-000000000003', 'snoqualmie', 'Snoqualmie', 'WA', 'King County', 'Incorporated City', 'GMA City / Ridge PUD', 890, 210, 120, 150, 985000, 380, 430, 15, 32, 5.4, 2620000, 3020000, 'City of Snoqualmie (Tolt River supply via Cascade Water Alliance)', 'City of Snoqualmie WWTP (Snoqualmie River outfall)', 'Snoqualmie River 100-yr floodplain constrains the valley floor; salmon-critical FW-zone buffers; Mount Si NRCA and conservation lands wall the east; Snoqualmie Ridge PUD is in terminal buildout phases.', 'A city boxed by geography: the river''s floodplain below, Mount Si''s conservation wall above, and the Snoqualmie Ridge master-planned community entering its final phases.', 2039, 88, 34, '2026-10-02T00:00:00Z'),
+  ('a1000000-0000-4000-8000-000000000004', 'sammamish', 'Sammamish', 'WA', 'King County', 'Incorporated City', 'GMA City / Fully-Built UGA', 940, 180, 70, 95, 1650000, 470, 545, 10, 24, 4.8, 3920000, 4520000, 'Cascade Water Alliance (Tolt + Tacoma supply blends)', 'King County Regional system (Sammamish Plateau divider to South Plant)', 'Plateau fully platted — no greenfield land remains; Lake Sammamish phosphorus TMDL caps impervious runoff; 35% tree-canopy code; East Lake Sammamish landslide benches; town-center up-zone is the only density valve.', 'The region''s highest baseline and earliest depletion: a fully-platted plateau city whose only growth valve is a contested town center. Supply here is arithmetic — the platted grid is complete.', 2034, 70, 17, '2026-10-02T00:00:00Z'),
+  ('a1000000-0000-4000-8000-000000000005', 'issaquah', 'Issaquah', 'WA', 'King County', 'Incorporated City', 'GMA City / Central Issaquah Plan', 1320, 320, 150, 185, 1180000, 415, 480, 14, 30, 5.1, 2960000, 3440000, 'Cascade Water Alliance (Tolt supply, Issaquah zone)', 'King County Regional system (Issaquah interceptor; Sammamish Valley plant capacity headroom)', 'Issaquah Alps (Cougar, Tiger, Squak mountains) wall the UGA on three sides; legacy coal-mine hazard areas; landslide hazard zones on the benches; I-90 is the only access spine; Highlands PUD in final phases.', 'The mountain-walled valley city: growth can only go vertical in the Central Issaquah Plan footprint or uphill into the last Highlands phases. 150–185 net acres is the honest residue.', 2040, 79, 30, '2026-10-02T00:00:00Z'),
+  ('a1000000-0000-4000-8000-000000000006', 'shoreline', 'Shoreline', 'WA', 'King County', 'Incorporated City', 'GMA City / 185th Station Area', 1010, 250, 110, 140, 875000, 345, 400, 12, 26, 4.9, 2120000, 2460000, 'Seattle Public Utilities via wholesale + Alderwood Water District edges', 'King County Regional system (Ronald transfer; West Point plant)', '185th St Link station-area construction windows gate the up-zone; Boeing Creek and riparian corridors cut the grid; single-family character overlays slow parcel consolidation; Aurora (SR-99) corridor noise + OSHA setbacks.', 'The TOD conversion play: an inner-ring Seattle suburb re-platting around a light-rail station that opened in 2024. Assembly risk, not land supply, is the binding constraint.', 2037, 46, 8, '2026-10-02T00:00:00Z');
+
+-- Attach the Puget ledger to its region row.
+update public.submarkets
+set region_id = (select id from public.regions where slug = 'puget-sound')
+where slug in ('bainbridge-island','vashon-island','snoqualmie','sammamish','issaquah','shoreline');
+
+insert into public.property_listings (
+  id, submarket_id, title, property_type, price, acreage, bedrooms, bathrooms,
+  square_feet, zoning_code, description, image_url, featured, status, created_at
+) values
+  ('b2000000-0000-4000-8000-000000000001', 'a1000000-0000-4000-8000-000000000001', 'Waterline Contemporary on the Island''s South End', 'Single-Family', 2450000, 0.9, 4, 3.5, 3850, 'R-0.4 Island Residential', 'Cedar-and-blackened-steel contemporary set low against a westward water view — the compliance posture that island review rewards. Moored three miles from the ferry, inside a 90–120-acre net-buildable band that can never grow.', '/images/bainbridge-modern.png', TRUE, 'New', '2026-10-02T00:00:00Z'),
+  ('b2000000-0000-4000-8000-000000000002', 'a1000000-0000-4000-8000-000000000002', 'Island Farmstead on 10 Deed Acres', 'Luxury Agricultural/Farm Estate', 1675000, 10.3, 3, 2, 2640, 'RA-10 Rural Area', 'Classic Vashon hold: farmhouse, restored barn, and fenced pasture under RA-10 — the rural designation that caps density at one dwelling per ten acres. Well and septic, ferry-dependent, and forever outside any urban growth area.', '/images/vashon-farmhouse.png', FALSE, 'Active', '2026-10-02T00:00:00Z'),
+  ('b2000000-0000-4000-8000-000000000003', 'a1000000-0000-4000-8000-000000000002', 'Banked View Lot Above Tramp Harbor', 'Land Parcel', 525000, 2.4, 0, 0, 0, 'RA-10 Potential Lot-of-Record', '2.4 wooded acres with a permitted-view building envelope — pending lot-of-record confirmation, the only path to a new Vashon homesite. Well site approved; septic design banked.', '/images/acreage-land.png', FALSE, 'Active', '2026-10-02T00:00:00Z'),
+  ('b2000000-0000-4000-8000-000000000004', 'a1000000-0000-4000-8000-000000000003', 'Ridge Craftsman Steps from the Falls Trail', 'Single-Family', 1090000, 0.26, 4, 3, 2980, 'R-8 Ridge Residential', 'Late-phase Snoqualmie Ridge craftsman with Mount Si framing the street. The PUD that added 2,200 homes is entering terminal phases — 120–150 net acres region-wide, floodplain-walled below and conservation-walled above.', '/images/snoqualmie-craftsman.png', FALSE, 'New', '2026-10-02T00:00:00Z'),
+  ('b2000000-0000-4000-8000-000000000005', 'a1000000-0000-4000-8000-000000000004', 'Plateau Lakefront with Private Dock', 'Single-Family', 2895000, 0.85, 5, 4, 4420, 'R-1 Lakefront Estate', '115 feet of Lake Sammamish frontage with a permitted dock — in a city whose platted grid is finished and whose 2034 depletion horizon is the region''s earliest. Hold, lease, and let arithmetic work.', '/images/sammamish-lakefront.png', FALSE, 'Active', '2026-10-02T00:00:00Z'),
+  ('b2000000-0000-4000-8000-000000000006', 'a1000000-0000-4000-8000-000000000005', 'Cougar Mountain View Estate', 'Single-Family', 1875000, 1.3, 4, 3.5, 3960, 'R-1 View Overlay', 'Terraced decks above the Issaquah valley floor with Seattle and Lake Sammamish in the sightline. Coal-mine hazard review cleared; landslide benches engineered. Inside the mountain-walled city''s 150–185-acre residue.', '/images/issaquah-viewhome.png', FALSE, 'Active', '2026-10-02T00:00:00Z'),
+  ('b2000000-0000-4000-8000-000000000007', 'a1000000-0000-4000-8000-000000000005', 'Central Issaquah Vertical Mixed-Use Parcel', 'Infill Multi-Family', 1950000, 0.62, 0, 0, 0, 'CIP Core Urban Village', '0.62 acres in the Central Issaquah Plan''s core — the only place in the city where height and density are by right. Six stories as-of-right, transit-spine frontage. The value is the entitlement, not the dirt.', '/images/infill-parcel.png', FALSE, 'Active', '2026-10-02T00:00:00Z'),
+  ('b2000000-0000-4000-8000-000000000008', 'a1000000-0000-4000-8000-000000000006', '185th Station TOD Townhome Row', 'Infill Multi-Family', 1480000, 0.41, 0, 0, 0, 'TC-4 Station Area', 'Assembled row of four 1950s parcels one block from the 185th Street Link station — the TOD up-zone the city spent a decade approving. Eight townhomes by right in the TC-4 envelope.', '/images/shoreline-townhomes.png', FALSE, 'New', '2026-10-02T00:00:00Z');
 
 insert into public.property_listings (
   id, submarket_id, title, property_type, price, acreage, bedrooms, bathrooms,

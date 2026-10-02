@@ -1,0 +1,28 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "**QA Review: KPI Tile Strip & Depletion Timeline Scrubber (Desktop Light Mode)**\n\n### 1. KPI Tiles (Median Price, Live Buildable Reserve, Next Exhaustion)\n*   **Values Present:** **PASS.** All three tiles display their primary metrics ($1.08M, 663 ac, 2034 · Sammamish) and secondary context lines correctly.\n*   **Alignment:** **PASS.** The three cards are horizontally aligned with consistent padding, font sizing, and vertical centering of content.\n*   **Clipping:** **PASS.** No text or graphical elements (including the King/Kitsap split bar in the middle tile) are clipped by container boundaries.\n\n### 2. Depletion Timeline Scrubber\n*   **Controls Render:** **PASS.** The Play (triangle), Reset (circular arrow), and active state indicator (hollow circle) are clearly visible and correctly styled.\n*   **Slider & Ticks:** **PASS.** The horizontal timeline track is present with evenly spaced tick marks (grey dots) representing exhaustion years. The \"As of 2026\" label and the green \"0 of 6 past exhaustion\" badge are rendered without error.\n\n### 3. Overlap & Contrast\n*   **Overlap:** **PASS.** There is no overlapping of elements. The KPI tiles have adequate spacing between them, and the timeline scrubber below has sufficient margin. Text within the split bar (\"King 558 ac · Kitsap 105 ac\") does not overlap the bar itself.\n*   **Contrast:** **PASS.** \n    *   Primary values (black/dark grey on white) meet WCAG AA standards.\n    *   The orange \"2034\" provides good visibility against the white background.\n    *   The green badge (\"0 of 6...\") uses a light background with dark text, ensuring readability.\n    *   The purple/green split bar colors are distinct from the white card background.\n\n---\n\n### **Overall Verdict: PASS**\n\nThe component is production-ready. All data points are legible, the interactive controls are clearly defined, and the layout is clean with no visual bugs or accessibility concerns regarding contrast or clipping.",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": 1790934709,
+  "id": "2026100217514239f387a249f24c97",
+  "model": "glm-5v-turbo",
+  "object": "chat.completion",
+  "request_id": "2026100217514239f387a249f24c97",
+  "usage": {
+    "completion_tokens": 456,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "prompt_tokens": 993,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "total_tokens": 1449
+  }
+}

@@ -274,6 +274,35 @@ function MethodologyBody() {
           generated) for paper dossiers.
         </p>
       </Section>
+
+      <Section title="9 · Multi-region ledgers (round 15)">
+        <p>
+          <strong className="text-foreground">One engine, one registry, many regions.</strong>{" "}
+          Region-scoped routes (<span className="font-mono text-[11.5px]">#/r/&lt;slug&gt;/matrix</span> …)
+          scope every workspace — matrix, projections, listings,
+          submarket profiles — to one registry region. Bare routes keep
+          meaning the corridor, so every share link minted before the
+          region switch still resolves. All per-region aggregates
+          (medians, mean CAGR, depletion window, OR/WA and county splits)
+          are computed from that region&apos;s rows only; a second live
+          region never blends into another&apos;s ledger.
+        </p>
+        <p>
+          The Puget Sound ledger (round 15&apos;s first live PNW region)
+          carries two region-calibrated inputs:{" "}
+          <strong className="text-foreground">property tax</strong> uses
+          county-level effective blends (King 0.90%, Kitsap 0.85%) in
+          place of the Gorge-county state blends, and the rent heuristic
+          stays corridor-anchored with its market index{" "}
+          <strong className="text-foreground">capped at +25%</strong> —
+          deliberately conservative for King County&apos;s $875k–$1.65M
+          baselines until a per-region rent calibration lands.
+          Comparables and palette searches are region-scoped; the
+          depletion-adjusted and real-terms lenses apply unchanged
+          because they are properties of each market row, not of the
+          region.
+        </p>
+      </Section>
     </div>
   );
 }

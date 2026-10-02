@@ -19,6 +19,7 @@ import {
   Download,
   Droplets,
   Flame,
+  GitCompareArrows,
   LandPlot,
   Recycle,
   Table2,
@@ -89,16 +90,195 @@ function DeltaChip({
   );
 }
 
+/* ------------------------------------------------------------------ */
+/* Round 15 — peer-set quick compare: the target + its top-3          */
+/* structural peers on one normalized grid, the same visual language   */
+/* the matrix quick-compare panel speaks (bars = value / row max,      */
+/* winner tags only where the investor direction is unambiguous).      */
+/* ------------------------------------------------------------------ */
+
+const PEER_METRICS: {
+  label: string;
+  title: string;
+  value: (s: Submarket) => string;
+  raw: (s: Submarket) => number;
+  winner: "max" | "min" | null;
+}[] = [
+  {
+    label: "20-yr CAGR",
+    title: "Projected compound annual growth — leader tagged",
+    value: (s) => fmtPct(s.projectedCagr),
+    raw: (s) => s.projectedCagr,
+    winner: "max",
+  },
+  {
+    label: "2046 value",
+    title: "Baseline compounded at the market's own CAGR to 2046",
+    value: (s) =>
+      fmtCurrency(
+        futureValue(s.baselinePrice2026, s.projectedCagr, 20),
+        { compact: true }
+      ),
+    raw: (s) => futureValue(s.baselinePrice2026, s.projectedCagr, 20),
+    winner: "max",
+  },
+  {
+    label: "Baseline '26",
+    title: "2026 median baseline — cheapest entry tagged",
+    value: (s) => fmtCurrency(s.baselinePrice2026, { compact: true }),
+    raw: (s) => s.baselinePrice2026,
+    winner: "min",
+  },
+  {
+    label: "Net buildable",
+    title: "Net-buildable band midpoint — no leader: more supply cuts both ways",
+    value: (s) => fmtAcres(Math.round(netBuildableMid(s))),
+    raw: (s) => netBuildableMid(s),
+    winner: null,
+  },
+  {
+    label: "Land runway",
+    title: "Years of raw-land runway from the 2026 baseline",
+    value: (s) => `${runwayYears(s.depletionYear)} yr`,
+    raw: (s) => runwayYears(s.depletionYear),
+    winner: "max",
+  },
+];
+
+function PeerQuickCompare({
+  market,
+  peers,
+}: {
+  market: Submarket;
+  peers: Submarket[];
+}) {
+  const set = [market, ...peers];
+  return (
+    <div
+      role="region"
+      aria-label="Peer-set quick compare"
+      className="thin-scroll mt-4 overflow-x-auto rounded-xl border bg-card p-4 shadow-sm"
+    >
+      <div className="mb-3 min-w-[560px]">
+        <p className="flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground">
+          <GitCompareArrows
+            className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400"
+            aria-hidden
+          />
+          Peer-set quick compare
+          <span className="rounded-sm bg-muted px-1.5 py-px text-[10px] font-medium tabular-nums">
+            {market.name} + top {peers.length} peers
+          </span>
+        </p>
+      </div>
+      <div
+        className="grid min-w-[560px] gap-x-3 gap-y-2.5"
+        style={{
+          gridTemplateColumns: `86px repeat(${set.length}, minmax(0, 1fr))`,
+        }}
+      >
+        {/* Column headers — target in emerald, peers in zinc. */}
+        <div aria-hidden />
+        {set.map((s, i) => (
+          <p
+            key={s.slug}
+            className="flex items-center gap-1.5 truncate text-[12.5px] font-semibold"
+          >
+            <span
+              className="h-2 w-2 shrink-0 rounded-full"
+              style={{
+                backgroundColor:
+                  i === 0 ? "#10b981" : "#a1a1aa",
+              }}
+              aria-hidden
+            />
+            <span className="truncate">{s.name}</span>
+            {i === 0 ? (
+              <span className="shrink-0 rounded-sm border border-emerald-500/30 bg-emerald-500/10 px-1 py-px text-[9px] font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
+                this
+              </span>
+            ) : null}
+          </p>
+        ))}
+
+        {/* Metric rows — bar width = value / row max, winner tagged only
+            where the investor direction is unambiguous. */}
+        {PEER_METRICS.map((metric) => {
+          const raws = set.map(metric.raw);
+          const max = Math.max(...raws);
+          const min = Math.min(...raws);
+          const winnerIdx =
+            metric.winner === "max"
+              ? raws.indexOf(max)
+              : metric.winner === "min"
+                ? raws.indexOf(min)
+                : -1;
+          return (
+            <div key={metric.label} className="contents">
+              <p
+                className="self-center text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground"
+                title={metric.title}
+              >
+                {metric.label}
+              </p>
+              {set.map((s, i) => {
+                const pct = max > 0 ? (metric.raw(s) / max) * 100 : 0;
+                const isWinner = i === winnerIdx && set.length > 1;
+                return (
+                  <div key={s.slug} className="min-w-0">
+                    <p
+                      className={cn(
+                        "truncate text-[12.5px] font-semibold tabular-nums",
+                        isWinner && "text-emerald-600 dark:text-emerald-400",
+                        i === 0 && !isWinner && "text-foreground"
+                      )}
+                    >
+                      {metric.value(s)}
+                      {isWinner ? (
+                        <span
+                          className="ml-1.5 rounded-sm border border-emerald-500/30 bg-emerald-500/10 px-1 py-px text-[9.5px] font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300"
+                          title={metric.title}
+                        >
+                          leads
+                        </span>
+                      ) : null}
+                    </p>
+                    <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted">
+                      <div
+                        className={cn(
+                          "h-full rounded-full",
+                          i === 0
+                            ? "bg-emerald-500/80"
+                            : "bg-zinc-400 dark:bg-zinc-600",
+                          isWinner && i !== 0 && "bg-emerald-500/70"
+                        )}
+                        style={{ width: `${Math.max(3, pct)}%` }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export function SubmarketDetailView({
   slug,
   submarkets,
   listings,
   navigate,
+  regionName = "corridor",
 }: {
   slug: string;
   submarkets: Submarket[];
   listings: PropertyListing[];
   navigate: NavigateFn;
+  /** Region display word ("corridor" | "region") — round 15. */
+  regionName?: string;
 }) {
   const [detailId, setDetailId] = useState<string | null>(null);
   const { toast } = useToast();
@@ -178,7 +358,7 @@ export function SubmarketDetailView({
       <div className="mx-auto flex w-full max-w-7xl flex-col items-center gap-4 px-4 pb-16 pt-24 text-center sm:px-6 lg:px-8">
         <p className="text-lg font-semibold">Micro-market not found</p>
         <p className="max-w-md text-sm text-muted-foreground">
-          No jurisdiction in the corridor ledger matches &quot;{slug}&quot;.
+          No jurisdiction in the {regionName} ledger matches &quot;{slug}&quot;.
         </p>
         <Button onClick={() => navigate({ view: "matrix" })} className="gap-2">
           <Table2 className="h-4 w-4" aria-hidden />
@@ -271,7 +451,7 @@ export function SubmarketDetailView({
           icon={Flame}
           label="2046 projected band"
           value={`${fmtCurrency(market.projectedPrice2046Min, { compact: true })}–${fmtCurrency(market.projectedPrice2046Max, { compact: true })}`}
-          sub={`vs corridor mean: ${outperformance >= 0 ? "+" : ""}${outperformance.toFixed(0)}% cumulative`}
+          sub={`vs ${regionName} mean: ${outperformance >= 0 ? "+" : ""}${outperformance.toFixed(0)}% cumulative`}
           accent="emerald"
         />
         <StatCard
@@ -291,7 +471,7 @@ export function SubmarketDetailView({
               <MicroLabel>Compound Projection · 2026–2046</MicroLabel>
               <p className="mt-1 text-[13px] text-muted-foreground">
                 {market.name} at {fmtPct(market.projectedCagr)} vs the same
-                baseline compounding at the {fmtPct(corridorCagr)} corridor mean
+                baseline compounding at the {fmtPct(corridorCagr)} {regionName} mean
               </p>
             </div>
             <div className="flex flex-col items-end gap-1.5 text-[11.5px] text-muted-foreground">
@@ -344,7 +524,7 @@ export function SubmarketDetailView({
                   cursor={{ stroke: "var(--border)", strokeDasharray: "4 4" }}
                   formatter={(value: number, name: string) => [
                     fmtCurrency(value),
-                    name === "market" ? market.name : "Corridor mean",
+                    name === "market" ? market.name : `${regionName} mean`,
                   ]}
                   labelFormatter={(y) => `${y}`}
                   contentStyle={{
@@ -477,7 +657,7 @@ export function SubmarketDetailView({
           <div className="min-w-0">
             <MicroLabel>Comparable Micro-Markets</MicroLabel>
             <h2 className="mt-1.5 text-xl font-semibold tracking-tight sm:text-2xl">
-              Structural peers across the corridor
+              Structural peers across the {regionName}
             </h2>
             <p className="mt-1.5 max-w-2xl text-[13.5px] leading-relaxed text-muted-foreground">
               Ranked by proximity on the four structural axes that drive this
@@ -534,6 +714,12 @@ export function SubmarketDetailView({
             Export CSV
           </Button>
         </div>
+        {/* Round 15 — the peer-set quick compare: the target + its top-3
+            structural peers on one normalized grid before the detail cards. */}
+        <PeerQuickCompare
+          market={market}
+          peers={findComparableMarkets(market, submarkets, 3)}
+        />
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {findComparableMarkets(market, submarkets, 3).map((peer, i) => {
             const dCagr = peer.projectedCagr - market.projectedCagr;

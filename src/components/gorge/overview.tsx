@@ -13,6 +13,7 @@ import {
   type PropertyListing,
   type Submarket,
 } from "@/lib/gorge";
+import type { RegionContent } from "@/lib/region-content";
 import type { NavigateFn, Route } from "./gorge-app";
 import {
   CountUp,
@@ -23,8 +24,9 @@ import {
   StateBadge,
 } from "./shared";
 import { CorridorMap } from "./corridor-map";
+import { PugetSoundMap } from "./puget-sound-map";
 import { FrameworkExplorer } from "./framework-explorer";
-import { ArbitrageSpotlight } from "./arbitrage-spotlight";
+import { ArbitrageSpotlight, PugetArbitrageSpotlight } from "./arbitrage-spotlight";
 
 /** Small drilldown chip rendered in a StatCard's action slot. */
 function DrilldownChip({
@@ -49,12 +51,20 @@ function DrilldownChip({
   );
 }
 
-function Hero({ stats }: { stats: CorridorStats }) {
+function Hero({
+  stats,
+  content,
+  navigate,
+}: {
+  stats: CorridorStats;
+  content: RegionContent;
+  navigate: NavigateFn;
+}) {
   return (
     <section className="relative isolate overflow-hidden bg-zinc-950">
       <Image
-        src="/images/hero-gorge.png"
-        alt="Aerial view of the forested Columbia River Gorge at golden hour"
+        src={content.heroImage}
+        alt={content.heroAlt}
         fill
         priority
         sizes="100vw"
@@ -64,35 +74,32 @@ function Hero({ stats }: { stats: CorridorStats }) {
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,rgba(16,185,129,0.14),transparent_55%)]" />
 
       <div className="relative mx-auto flex min-h-[540px] max-w-7xl flex-col justify-end px-4 pb-14 pt-20 sm:px-6 lg:px-8">
-        <MicroLabel className="text-emerald-300/90">
-          Columbia River Gorge National Scenic Area · Est. 1986
-        </MicroLabel>
+        <MicroLabel className="text-emerald-300/90">{content.eyebrow}</MicroLabel>
         <h1 className="mt-4 max-w-3xl text-4xl font-semibold leading-[1.05] tracking-tight text-white sm:text-5xl lg:text-6xl">
-          Statutory land scarcity,
-          <span className="text-emerald-400"> priced in decades.</span>
+          {content.headline}
+          <span className="text-emerald-400">{content.headlineAccent}</span>
         </h1>
         <p className="mt-5 max-w-2xl text-[15px] leading-relaxed text-zinc-300 sm:text-base">
-          A full-ledger analytics platform for the 11 urban enclaves of the
-          Gorge: regulatory land-supply scarcity, urban growth boundaries,
-          micro-market pricing, and 20-year compound valuation projections
-          across Oregon and Washington.
+          {content.heroBody}
         </p>
 
         <div className="mt-7 flex flex-wrap gap-3">
-          <a
-            href="#/matrix"
+          <button
+            type="button"
+            onClick={() => navigate({ view: "matrix" })}
             className="inline-flex h-11 items-center gap-2 rounded-lg bg-emerald-500 px-5 text-sm font-semibold text-zinc-950 shadow-lg shadow-emerald-500/20 transition-colors hover:bg-emerald-400"
           >
-            Explore the Master Matrix
+            {content.ctaPrimary}
             <ArrowRight className="h-4 w-4" aria-hidden />
-          </a>
-          <a
-            href="#/projections"
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate({ view: "projections" })}
             className="inline-flex h-11 items-center gap-2 rounded-lg border border-white/20 bg-white/10 px-5 text-sm font-semibold text-white backdrop-blur-sm transition-colors hover:bg-white/20"
           >
             <LineChart className="h-4 w-4" aria-hidden />
-            Run 20-yr projections
-          </a>
+            {content.ctaSecondary}
+          </button>
         </div>
 
         <dl className="mt-10 grid max-w-3xl grid-cols-2 gap-px overflow-hidden rounded-xl border border-white/10 bg-white/10 backdrop-blur-md sm:grid-cols-4">
@@ -116,8 +123,8 @@ function Hero({ stats }: { stats: CorridorStats }) {
 
       {/* Scroll cue */}
       <motion.a
-        href="#corridor-metrics"
-        aria-label="Scroll to corridor metrics"
+        href="#region-metrics"
+        aria-label="Scroll to regional metrics"
         className="absolute bottom-4 left-1/2 hidden -translate-x-1/2 flex-col items-center gap-1 text-zinc-400 transition-colors hover:text-zinc-200 sm:flex"
         animate={{ y: [0, 6, 0] }}
         transition={{ duration: 2.2, repeat: Infinity, ease: "easeInOut" }}
@@ -179,7 +186,13 @@ function AppreciationLeaderboard({
   );
 }
 
-function DepletionClock({ submarkets }: { submarkets: Submarket[] }) {
+function DepletionClock({
+  submarkets,
+  scopeWord = "corridor",
+}: {
+  submarkets: Submarket[];
+  scopeWord?: string;
+}) {
   const ordered = [...submarkets].sort((a, b) => a.depletionYear - b.depletionYear);
   const first = ordered[0]?.depletionYear ?? 2032;
   const last = ordered[ordered.length - 1]?.depletionYear ?? 2038;
@@ -192,7 +205,7 @@ function DepletionClock({ submarkets }: { submarkets: Submarket[] }) {
         Terminal exhaustion window {first}–{last}
       </h3>
       <p className="mt-1.5 text-[13px] leading-relaxed text-muted-foreground">
-        At current absorption, the corridor's unentitled raw land converts to
+        At current absorption, the {scopeWord}'s unentitled raw land converts to
         final lots inside a single decade — the scarcity engine behind every
         projection on this platform.
       </p>
@@ -234,11 +247,13 @@ export function OverviewView({
   stats,
   listings,
   navigate,
+  content,
 }: {
   submarkets: Submarket[];
   stats: CorridorStats;
   listings: PropertyListing[];
   navigate: NavigateFn;
+  content: RegionContent;
 }) {
   const featured = listings.find((l) => l.featured) ?? null;
 
@@ -258,7 +273,7 @@ export function OverviewView({
     );
     const firstGone = byDepletion[0];
     const lastGone = byDepletion[byDepletion.length - 1];
-    return { medianMarket, topCagr, floorCagr, firstGone, lastGone };
+    return { byPrice, medianMarket, topCagr, floorCagr, firstGone, lastGone };
   }, [submarkets]);
 
   /** Navigate into the projections workspace with a preset query.
@@ -301,23 +316,23 @@ export function OverviewView({
 
   return (
     <div className="flex flex-col gap-14 pb-16 sm:gap-16">
-      <Hero stats={stats} />
+      <Hero stats={stats} content={content} navigate={navigate} />
 
       {/* Macro KPIs */}
       <section
-        id="corridor-metrics"
-        aria-label="Corridor key metrics"
+        id="region-metrics"
+        aria-label="Regional key metrics"
         className="mx-auto w-full max-w-7xl scroll-mt-20 px-4 sm:px-6 lg:px-8"
       >
         <SectionHeader
           eyebrow="Executive Overview"
-          title="The corridor in four numbers"
-          description="Every metric below is derived from the per-jurisdiction land inventories in the Master Matrix — the auditable bottom-up view of what remains buildable inside the Scenic Area's urban lines."
+          title={content.metricsTitle}
+          description={content.metricsDescription}
         />
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <StatCard
             icon={Layers}
-            label="Corridor buildable reserve"
+            label={`${content.scopeWord === "corridor" ? "Corridor" : "Regional"} buildable reserve`}
             value={
               <CountUp
                 target={stats.totalNetBuildableMid}
@@ -329,13 +344,21 @@ export function OverviewView({
               <Sparkline
                 points={sparkPoints.land}
                 color="#64748b"
-                label="Corridor buildable land declining to zero by the late 2030s"
+                label={`${content.scopeWord} buildable land declining to zero by the late 2030s`}
               />
             }
             footer={
               <div className="flex items-center gap-2 text-[12px] text-muted-foreground">
                 <Map className="h-3.5 w-3.5" aria-hidden />
-                OR {fmtAcres(Math.round(stats.orNetBuildable))} · WA {fmtAcres(Math.round(stats.waNetBuildable))}
+                {stats.orNetBuildable > 0 ? (
+                  <>
+                    OR {fmtAcres(Math.round(stats.orNetBuildable))} · WA {fmtAcres(Math.round(stats.waNetBuildable))}
+                  </>
+                ) : (
+                  <>
+                    WA {fmtAcres(Math.round(stats.waNetBuildable))} · all Washington side
+                  </>
+                )}
               </div>
             }
             action={
@@ -354,23 +377,28 @@ export function OverviewView({
                 format={(v) => fmtCurrency(Math.round(v), { compact: true })}
               />
             }
-            sub="11-jurisdiction median baseline, all product types"
+            sub={`${stats.submarketCount}-jurisdiction median baseline, all product types`}
             sparkline={
               <Sparkline
                 points={sparkPoints.median}
                 color="#0d9488"
-                label="Median price compounding at the corridor-average CAGR to 2046"
+                label={`Median price compounding at the ${content.scopeWord}-average CAGR to 2046`}
               />
             }
             footer={
               <div className="text-[12px] text-muted-foreground">
-                Wishram entry {fmtCurrency(305000, { compact: true })} → Hood River{" "}
-                {fmtCurrency(685000, { compact: true })}
+                {drill.byPrice[0]?.name} entry{" "}
+                {fmtCurrency(drill.byPrice[0]?.baselinePrice2026 ?? 0, { compact: true })} →{" "}
+                {drill.byPrice[drill.byPrice.length - 1]?.name}{" "}
+                {fmtCurrency(
+                  drill.byPrice[drill.byPrice.length - 1]?.baselinePrice2026 ?? 0,
+                  { compact: true }
+                )}
               </div>
             }
             action={
               <DrilldownChip
-                label={`Project ${drill.medianMarket.name} at the median →`}
+                label={`Project ${drill.medianMarket?.name} at the median →`}
                 onClick={() =>
                   goToProjections(
                     `m=${drill.medianMarket.slug}&pv=${
@@ -391,23 +419,24 @@ export function OverviewView({
                 duration={1.3}
               />
             }
-            sub="20-year horizon to 2046, corridor-wide mean"
+            sub={`20-year horizon to 2046, ${content.scopeWord}-wide mean`}
             accent="emerald"
             sparkline={
               <Sparkline
                 points={sparkPoints.multiple}
                 color="#10b981"
-                label="Growth multiple of one dollar at the average corridor CAGR"
+                label={`Growth multiple of one dollar at the average ${content.scopeWord} CAGR`}
               />
             }
             footer={
               <div className="text-[12px] text-muted-foreground">
-                Top market: Hood River {fmtPct(5.8)} · floor: Wishram {fmtPct(4.3)}
+                Top market: {drill.topCagr?.name} {fmtPct(drill.topCagr?.projectedCagr ?? 0)} · floor:{" "}
+                {drill.floorCagr?.name} {fmtPct(drill.floorCagr?.projectedCagr ?? 0)}
               </div>
             }
             action={
               <DrilldownChip
-                label={`See the CAGR spread (${drill.topCagr.name} vs ${drill.floorCagr.name}) →`}
+                label={`See the CAGR spread (${drill.topCagr?.name} vs ${drill.floorCagr?.name}) →`}
                 onClick={() =>
                   goToProjections(
                     `m=${drill.topCagr.slug},${drill.floorCagr.slug}&r=${stats.averageCagr.toFixed(1)}&s=1`
@@ -431,13 +460,13 @@ export function OverviewView({
             }
             footer={
               <div className="text-[12px] text-muted-foreground">
-                Mosier exhausts first ({stats.earliestDepletion}); The Dalles &amp;
-                Dallesport last ({stats.latestDepletion})
+                {drill.firstGone?.name} exhausts first ({stats.earliestDepletion});{" "}
+                {drill.lastGone?.name} last ({stats.latestDepletion})
               </div>
             }
             action={
               <DrilldownChip
-                label={`Model the exhaustion (${drill.firstGone.name} → ${drill.lastGone.name}) →`}
+                label={`Model the exhaustion (${drill.firstGone?.name} → ${drill.lastGone?.name}) →`}
                 onClick={() =>
                   goToProjections(
                     `m=${drill.firstGone.slug},${drill.lastGone.slug}&s=1&d=1`
@@ -453,30 +482,46 @@ export function OverviewView({
       <section aria-label="Regional map" className="mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8">
         <SectionHeader
           eyebrow="Regional Geography"
-          title="Eleven markets, one river, two tax regimes"
-          description="Hover any enclave for its supply band and appreciation tier; click through for the full micro-market profile."
+          title={content.mapTitle}
+          description={content.mapDescription}
         />
-        <CorridorMap submarkets={submarkets} stats={stats} navigate={navigate} />
+        {content.map === "puget" ? (
+          <PugetSoundMap
+            submarkets={submarkets}
+            stats={stats}
+            navigate={navigate}
+          />
+        ) : (
+          <CorridorMap
+            submarkets={submarkets}
+            stats={stats}
+            navigate={navigate}
+          />
+        )}
       </section>
 
       {/* Regulatory framework */}
       <section aria-label="Regulatory framework" className="mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8">
         <SectionHeader
           eyebrow="Regulatory Framework"
-          title="Why supply cannot respond to demand"
-          description="The 1986 Act stacks a federal scenic review over Oregon's Goal 14 and Washington's GMA. Select a lens to see what each layer does to the buildable-land ledger."
+          title={content.frameworkTitle}
+          description={content.frameworkDescription}
         />
-        <FrameworkExplorer />
+        <FrameworkExplorer frameworks={content.frameworks} />
       </section>
 
       {/* State arbitrage */}
-      <section aria-label="State tax arbitrage" className="mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8">
+      <section aria-label="Tax arbitrage spotlight" className="mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8">
         <SectionHeader
-          eyebrow="State Arbitrage Spotlight"
-          title="The border on the bridge"
-          description="Washington levies no personal income tax; Oregon tops out at 9.9%. The Gorge is one of the only metropolitan-scale labor sheds where the arbitrage is a four-minute commute across a river."
+          eyebrow="Arbitrage Spotlight"
+          title={content.arbitrageTitle}
+          description={content.arbitrageDescription}
         />
-        <ArbitrageSpotlight />
+        {content.arbitrage === "wa-ca" ? (
+          <PugetArbitrageSpotlight />
+        ) : (
+          <ArbitrageSpotlight />
+        )}
       </section>
 
       {/* Leaderboards */}
@@ -487,7 +532,7 @@ export function OverviewView({
         />
         <div className="grid gap-4 lg:grid-cols-2">
           <AppreciationLeaderboard submarkets={submarkets} navigate={navigate} />
-          <DepletionClock submarkets={submarkets} />
+          <DepletionClock submarkets={submarkets} scopeWord={content.scopeWord} />
         </div>
       </section>
 
@@ -497,30 +542,38 @@ export function OverviewView({
           <div className="relative isolate overflow-hidden rounded-xl border bg-zinc-950">
             <Image
               src={featured.imageUrl}
-              alt="Luxury farm and vineyard estate with custom residence in the Columbia River Gorge"
+              alt={featured.title}
               fill
               sizes="(max-width: 1024px) 100vw, 1152px"
               className="object-cover opacity-45"
             />
             <div className="absolute inset-0 bg-gradient-to-r from-zinc-950 via-zinc-950/70 to-transparent" />
             <div className="relative flex flex-col gap-5 p-6 sm:p-10 lg:max-w-2xl">
-              <MicroLabel className="text-emerald-300/90">Featured Corridor Asset</MicroLabel>
+              <MicroLabel className="text-emerald-300/90">{content.featuredLabel}</MicroLabel>
               <h3 className="text-2xl font-semibold leading-tight tracking-tight text-white sm:text-3xl">
                 {featured.title}
               </h3>
               <p className="text-sm leading-relaxed text-zinc-300">
                 {featured.acreage} deed acres under {featured.zoningCode} zoning
-                with certified water rights, CRGNSA visual-subordinance
-                compliance, and a{" "}
-                {fmtCurrency(featured.price, { compact: true })} ask — the
-                benchmark agricultural compound of the National Scenic Area.
+                in {featured.submarket?.name ?? "the region"}
+                {featured.submarket
+                  ? ` — the ${featured.submarket.regulatoryFramework} market compounding at ${fmtPct(
+                      featured.submarket.projectedCagr
+                    )} through 2046`
+                  : ""}
+                , listed at{" "}
+                {fmtCurrency(featured.price, { compact: true })}.
               </p>
               <div className="flex flex-wrap gap-2">
                 {[
-                  `${featured.squareFeet.toLocaleString()} sq ft residence`,
-                  `${featured.bedrooms} bd / ${featured.bathrooms} ba`,
-                  "Water rights",
-                  "Mt. Hood views",
+                  featured.squareFeet > 0
+                    ? `${featured.squareFeet.toLocaleString()} sq ft`
+                    : "Unimproved land",
+                  featured.bedrooms > 0
+                    ? `${featured.bedrooms} bd / ${featured.bathrooms} ba`
+                    : "Development site",
+                  featured.submarket?.county,
+                  `Depletion ${featured.submarket?.depletionYear}`,
                 ].map((chip) => (
                   <span
                     key={chip}
@@ -530,13 +583,14 @@ export function OverviewView({
                   </span>
                 ))}
               </div>
-              <a
-                href="#/listings"
+              <button
+                type="button"
+                onClick={() => navigate({ view: "listings" })}
                 className="mt-1 inline-flex h-11 w-fit items-center gap-2 rounded-lg bg-emerald-500 px-5 text-sm font-semibold text-zinc-950 transition-colors hover:bg-emerald-400"
               >
                 View the listings showcase
                 <ArrowRight className="h-4 w-4" aria-hidden />
-              </a>
+              </button>
             </div>
           </div>
         </section>

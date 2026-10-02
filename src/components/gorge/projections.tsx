@@ -284,10 +284,13 @@ function ChartTooltip({
 export function ProjectionsView({
   submarkets,
   navigate,
+  regionName = "corridor",
 }: {
   submarkets: Submarket[];
   /** Lets the drilldown back-link return to the workspace it came from. */
   navigate?: NavigateFn;
+  /** Region display word ("corridor" | "region") — round 15. */
+  regionName?: string;
 }) {
   const defaultSelected = useMemo(
     () =>
@@ -611,7 +614,7 @@ export function ProjectionsView({
       <SectionHeader
         eyebrow="Compound Capitalization & Land Depletion Visualizer"
         title="FV = PV · (1 + r)ⁿ, applied to every market in the Gorge"
-        description="Select submarkets, override the baseline price and growth rate, and stretch the horizon to stress-test development hypotheses against the corridor's statutory land ceiling."
+        description="Select submarkets, override the baseline price and growth rate, and stretch the horizon to stress-test development hypotheses against the region's statutory land ceiling."
         action={
           <div className="flex items-center gap-2">
             <Button

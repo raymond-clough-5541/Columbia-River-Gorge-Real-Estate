@@ -44,9 +44,9 @@ import { useToast } from "@/hooks/use-toast";
 import { useWatchlist } from "@/lib/watchlist-store";
 import {
   INSURANCE_RATE,
-  PROPERTY_TAX_RATES,
   RENTAL_RESERVE_RATE,
   SEASONAL_RENT_BANDS,
+  effectiveTaxRate,
   estimateMarketRent,
   fmtAcres,
   fmtCurrency,
@@ -209,7 +209,8 @@ function underwrite(
   const loan = price - down;
   const state = l.submarket?.state ?? "OR";
   const pi = monthlyPayment(loan, rate, SHEET_TERM);
-  const tax = (price * PROPERTY_TAX_RATES[state]) / 100 / 12;
+  // County-aware effective rate (round 15 — King/Kitsap overrides).
+  const tax = (price * effectiveTaxRate(state, l.submarket?.county)) / 100 / 12;
   const ins = isLand ? 0 : (price * INSURANCE_RATE) / 12;
   const monthlyCarry = pi + tax + ins;
 
@@ -854,6 +855,42 @@ export function CompareSheet({
     });
   };
 
+  /* Round 15 — the portfolio equity-runway CSV: the 21-point series the
+   * strip chart draws, as a flat table (year × value/debt/equity). The
+   * lens tag rides the header + toast exactly like the sheet export. */
+  const exportRunwayCsv = () => {
+    if (!portfolio) return;
+    const realTag = realTerms ? " (real 2026 $)" : "";
+    const headers = [
+      `Year${realTag}`,
+      "Aggregate value",
+      "Aggregate amortizing debt",
+      "Equity (value − debt)",
+      "Equity / down stroke",
+    ];
+    const rows: CsvCell[][] = portfolio.series.map((p) => [
+      p.year,
+      Math.round(p.value),
+      Math.round(p.debt),
+      Math.round(p.equity),
+      portfolio.totalDown > 0
+        ? (p.equity / portfolio.totalDown).toFixed(2)
+        : "n/a",
+    ]);
+    downloadCsv(
+      `portfolio-equity-runway-${timestampSuffix()}`,
+      toCsv(headers, rows)
+    );
+    toast({
+      title: "Equity runway exported",
+      description: `21-year series · ${portfolio.count} underwritten column${
+        portfolio.count === 1 ? "" : "s"
+      } → CSV${
+        realTerms ? " · deflated to 2026$ at 2.5%/yr" : " · nominal terms"
+      }.`,
+    });
+  };
+
   /* Round 9-a: the what-if editor form, hoisted out of the ADD popover
      so each column's pencil can mount the exact same fields in EDIT
      mode. Mode is derived from editingId — null renders the add
@@ -1311,6 +1348,16 @@ export function CompareSheet({
                           ? ` · ${portfolio.landCount} land`
                           : ""}
                       </span>
+                      <button
+                        type="button"
+                        onClick={exportRunwayCsv}
+                        aria-label="Export the 21-year portfolio equity-runway series as CSV"
+                        title="Export the equity-runway series (21 years) as CSV"
+                        className="ml-1 inline-flex h-6 items-center gap-1 rounded-md border bg-background px-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground transition-colors hover:border-emerald-500/50 hover:text-emerald-700 active:scale-[0.97] dark:hover:text-emerald-300"
+                      >
+                        <Download className="h-3 w-3" aria-hidden />
+                        Runway CSV
+                      </button>
                     </p>
                     <p className="mt-1 text-[11.5px] text-muted-foreground tabular-nums">
                       {fmtAcres(portfolio.totalAcres, 1)} deed acres · blended{" "}

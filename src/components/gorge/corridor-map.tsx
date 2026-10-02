@@ -457,7 +457,7 @@ export function CorridorMap({
         <div>
           <MicroLabel>Regional Map Summary</MicroLabel>
           <p className="mt-1 text-sm text-muted-foreground">
-            All 11 jurisdictions · dot size = net buildable acres ·{" "}
+            All {submarkets.length} jurisdictions · dot size = net buildable acres ·{" "}
             {mode === "cagr"
               ? "color = 20-yr CAGR tier"
               : "color = raw-land runway remaining"}

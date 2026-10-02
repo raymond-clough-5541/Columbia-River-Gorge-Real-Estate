@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useTheme } from "next-themes";
 import {
   Building2,
@@ -41,10 +41,13 @@ import {
 import {
   fmtCurrency,
   fmtPct,
+  DEFAULT_REGION_SLUG,
   type PropertyListing,
   type PropertyType,
+  type Region,
   type Submarket,
 } from "@/lib/gorge";
+import { REGION_SHORT_NAMES } from "@/lib/region-content";
 import type { NavigateFn, Route } from "./gorge-app";
 
 /* ------------------------------------------------------------------ */
@@ -120,56 +123,76 @@ function listingIcon(propertyType: PropertyType): typeof Home {
 }
 
 /* Resolve a stored destination hash into a palette entry: label + icon +
- * route. Returns null for destinations that no longer resolve (a stale
- * submarket slug from a reseeded DB degrades to silence, not an error). */
+ * route. Region-scoped hashes (#/r/<slug>/matrix — round 15) parse into
+ * region-tagged routes. Returns null for destinations that no longer
+ * resolve (a stale submarket slug from a reseeded DB degrades to silence,
+ * not an error). */
 function resolveDestination(
   hash: string,
   submarkets: Submarket[]
 ): { label: string; sub?: string; icon: typeof History; route: Route } | null {
-  if (hash === "#/")
+  // Leading region scope, if any: #/r/<slug>/rest (or #/r/<slug>/).
+  let rest = hash.replace(/^#\//, "");
+  let region: string | undefined;
+  const scopeMatch = rest.match(/^r\/([\w-]+)\/(.*)$/);
+  if (scopeMatch) {
+    region = scopeMatch[1];
+    rest = scopeMatch[2];
+  } else {
+    const bareScope = rest.match(/^r\/([\w-]+)\/?$/);
+    if (bareScope) {
+      region = bareScope[1];
+      rest = "";
+    }
+  }
+  const regionTag = region && region !== DEFAULT_REGION_SLUG ? REGION_SHORT_NAMES[region] ?? region : undefined;
+
+  if (rest === "")
     return {
       label: "Executive Overview",
-      sub: "Corridor KPIs · framework · arbitrage",
+      sub: regionTag ? `${regionTag} · region KPIs` : "Corridor KPIs · framework · arbitrage",
       icon: Mountain,
-      route: { view: "overview" },
+      route: { view: "overview", region },
     };
-  if (hash === "#/matrix")
+  if (rest === "matrix")
     return {
       label: "Master Matrix",
-      sub: "11-jurisdiction ledger",
+      sub: regionTag ? `${regionTag} · region ledger` : "11-jurisdiction ledger",
       icon: Table2,
-      route: { view: "matrix" },
+      route: { view: "matrix", region },
     };
-  if (hash === "#/projections")
+  if (rest === "projections")
     return {
       label: "Projections",
       sub: "Compound curves · scenarios",
       icon: LineChart,
-      route: { view: "projections" },
+      route: { view: "projections", region },
     };
-  if (hash === "#/listings")
+  if (rest === "listings")
     return {
       label: "Listings Showcase",
-      sub: "Search · filter · watchlist",
+      sub: regionTag ? `${regionTag} · search · filter` : "Search · filter · watchlist",
       icon: Search,
-      route: { view: "listings" },
+      route: { view: "listings", region },
     };
-  if (hash === "#/regions")
+  if (rest === "regions")
     return {
       label: "Expansion Registry",
       sub: "Region waves · launch dossiers",
       icon: Globe2,
       route: { view: "regions" },
     };
-  const m = hash.match(/^#\/submarket\/([\w-]+)$/);
+  const m = rest.match(/^submarket\/([\w-]+)$/);
   if (m) {
     const market = submarkets.find((s) => s.slug === m[1]);
     if (!market) return null;
     return {
       label: market.name,
-      sub: `${market.county} · micro-market profile`,
+      sub: `${market.county} · micro-market profile${
+        regionTag ? ` · ${regionTag}` : ""
+      }`,
       icon: Map,
-      route: { view: "submarket", slug: market.slug },
+      route: { view: "submarket", slug: market.slug, region },
     };
   }
   return null;
@@ -181,6 +204,7 @@ export function CommandPalette({
   navigate,
   submarkets,
   listings = [],
+  regions = [],
   onOpenShortcuts,
 }: {
   open: boolean;
@@ -192,9 +216,20 @@ export function CommandPalette({
    * group with dossier pre-open jumps; omitted/empty → no group, no
    * separator, palette unchanged. */
   listings?: PropertyListing[];
+  /** Registry regions — powers region-scoped palette navigation (r15). */
+  regions?: Region[];
   onOpenShortcuts: () => void;
 }) {
   const { resolvedTheme, setTheme } = useTheme();
+
+  // regionId → region lookup for per-submarket region scoping (round 15).
+  // Built as a plain record — the lucide `Map` icon import shadows the
+  // global Map constructor in this module.
+  const regionById = useMemo(() => {
+    const lookup: Record<string, Region> = {};
+    for (const r of regions) lookup[r.id] = r;
+    return lookup;
+  }, [regions]);
 
   // Destination memory as an external store (round 13-c): the router
   // pushes to it from every completed navigation; this re-renders via
@@ -336,44 +371,64 @@ export function CommandPalette({
 
         <CommandSeparator />
 
-        <CommandGroup heading="Micro-markets · 11 jurisdictions">
-          {submarkets.map((s) => (
-            <CommandItem
-              key={s.slug}
-              value={`${s.name} ${s.state} ${s.county} micro-market profile`}
-              onSelect={() =>
-                run(() => navigate({ view: "submarket", slug: s.slug }))
-              }
-              className="gap-2.5"
-            >
-              <Map className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-              <span className="min-w-0 flex-1">
-                <span className="block text-[13.5px] font-medium leading-tight">
-                  {s.name}
+        <CommandGroup heading={`Micro-markets · ${submarkets.length} jurisdictions`}>
+          {submarkets.map((s) => {
+            const region = regionById[s.regionId ?? ""];
+            const regionSlug = region?.slug;
+            const showRegion = regionSlug && regionSlug !== DEFAULT_REGION_SLUG;
+            return (
+              <CommandItem
+                key={s.slug}
+                value={`${s.name} ${s.state} ${s.county} micro-market profile ${
+                  showRegion ? (REGION_SHORT_NAMES[regionSlug] ?? regionSlug) : ""
+                }`}
+                onSelect={() =>
+                  run(() =>
+                    navigate({
+                      view: "submarket",
+                      slug: s.slug,
+                      region: regionSlug,
+                    })
+                  )
+                }
+                className="gap-2.5"
+              >
+                <Map className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[13.5px] font-medium leading-tight">
+                    {s.name}
+                  </span>
+                  <span className="block truncate text-[11px] text-muted-foreground">
+                    {s.county} ·{" "}
+                    {s.jurisdictionType === "Incorporated City"
+                      ? "City"
+                      : s.jurisdictionType === "Unincorporated Rural Area"
+                        ? "Rural area"
+                        : "Unincorporated"}
+                  </span>
                 </span>
-                <span className="block truncate text-[11px] text-muted-foreground">
-                  {s.county} ·{" "}
-                  {s.jurisdictionType === "Incorporated City"
-                    ? "City"
-                    : "Unincorporated"}
-                </span>
-              </span>
-              <span className="flex shrink-0 items-center gap-2">
-                <span
-                  className={
-                    s.state === "OR"
-                      ? "text-[11px] font-bold tracking-wider text-slate-600 dark:text-slate-300"
-                      : "text-[11px] font-bold tracking-wider text-emerald-600 dark:text-emerald-400"
-                  }
-                >
-                  {s.state}
+                <span className="flex shrink-0 items-center gap-2">
+                  {showRegion ? (
+                    <span className="rounded-full border border-teal-500/40 bg-teal-500/10 px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-wider text-teal-700 dark:text-teal-300">
+                      {REGION_SHORT_NAMES[regionSlug] ?? regionSlug}
+                    </span>
+                  ) : null}
+                  <span
+                    className={
+                      s.state === "OR"
+                        ? "text-[11px] font-bold tracking-wider text-slate-600 dark:text-slate-300"
+                        : "text-[11px] font-bold tracking-wider text-emerald-600 dark:text-emerald-400"
+                    }
+                  >
+                    {s.state}
                 </span>
                 <span className="text-[11px] tabular-nums text-muted-foreground">
                   {fmtPct(s.projectedCagr)}
                 </span>
               </span>
             </CommandItem>
-          ))}
+            );
+          })}
         </CommandGroup>
 
         {listings.length > 0 && (
@@ -417,7 +472,10 @@ export function CommandPalette({
                             detail: l.id,
                           })
                         );
-                        navigate({ view: "listings" });
+                        navigate({
+                          view: "listings",
+                          region: regionById[l.submarketId ?? ""]?.slug,
+                        });
                       })
                     }
                     className="gap-2.5"

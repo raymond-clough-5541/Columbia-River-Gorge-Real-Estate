@@ -6,7 +6,8 @@
 export type StateCode = "OR" | "WA";
 export type JurisdictionType =
   | "Incorporated City"
-  | "Unincorporated Urban Area";
+  | "Unincorporated Urban Area"
+  | "Unincorporated Rural Area";
 export type PropertyType =
   | "Single-Family"
   | "Luxury Agricultural/Farm Estate"
@@ -90,6 +91,88 @@ export interface CorridorStats {
   latestDepletion: number | null;
   orNetBuildable: number;
   waNetBuildable: number;
+}
+
+/* ------------------------------------------------------------------ */
+/* Region scoping (round 15) — one ledger per registry region.         */
+/* ------------------------------------------------------------------ */
+
+/** The canonical slug of the default (round-1) region. Bare hash routes
+ *  (\#/matrix, \#/submarket/dallesport, …) always resolve to it, so every
+ *  share link minted before the region switch keeps working unchanged. */
+export const DEFAULT_REGION_SLUG = "columbia-river-gorge";
+
+/** Aggregate a region's submarket ledger into the platform-wide stats
+ *  shape — the exact math the server component used for the corridor,
+ *  extracted so the client shell can derive per-region stats on the fly. */
+export function computeRegionStats(
+  submarkets: Submarket[],
+  listingCount: number
+): CorridorStats {
+  const netMid = submarkets.map(
+    (s) => (s.netBuildableAcresMin + s.netBuildableAcresMax) / 2
+  );
+  const baselines = submarkets
+       .map((s) => s.baselinePrice2026)
+    .sort((a, b) => a - b);
+  const mid = Math.floor(baselines.length / 2);
+  const depletionYears = submarkets
+    .map((s) => s.depletionYear)
+    .sort((a, b) => a - b);
+  return {
+    submarketCount: submarkets.length,
+    listingCount,
+    totalNetBuildableMin: submarkets.reduce(
+      (a, s) => a + s.netBuildableAcresMin,
+      0
+    ),
+    totalNetBuildableMid: Math.round(netMid.reduce((a, b) => a + b, 0)),
+    totalNetBuildableMax: submarkets.reduce(
+      (a, s) => a + s.netBuildableAcresMax,
+      0
+    ),
+    totalGrossVacant: Math.round(
+      submarkets.reduce((a, s) => a + s.grossVacantAcres, 0)
+    ),
+    regionalMedianPrice:
+      baselines.length === 0
+        ? 0
+        : baselines.length % 2 === 0
+          ? (baselines[mid - 1] + baselines[mid]) / 2
+          : baselines[mid],
+    averageCagr:
+      submarkets.length > 0
+        ? submarkets.reduce((a, s) => a + s.projectedCagr, 0) /
+          submarkets.length
+        : 0,
+    earliestDepletion: depletionYears[0] ?? null,
+    latestDepletion: depletionYears[depletionYears.length - 1] ?? null,
+    orNetBuildable: submarkets
+      .filter((s) => s.state === "OR")
+      .reduce(
+        (a, s) => a + (s.netBuildableAcresMin + s.netBuildableAcresMax) / 2,
+        0
+      ),
+    waNetBuildable: submarkets
+      .filter((s) => s.state === "WA")
+      .reduce(
+        (a, s) => a + (s.netBuildableAcresMin + s.netBuildableAcresMax) / 2,
+        0
+      ),
+  };
+}
+
+/** Submarkets belonging to a region — rows carrying the region's FK plus
+ *  the legacy corridor rows (null regionId, pre-registry seeds) which the
+ *  DEFAULT region inherits so nothing falls out of the ledger. */
+export function submarketsOfRegion(
+  all: Submarket[],
+  region: { id: string; slug: string }
+): Submarket[] {
+  const inheritLegacy = region.slug === DEFAULT_REGION_SLUG;
+  return all.filter(
+    (s) => s.regionId === region.id || (inheritLegacy && s.regionId == null)
+  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -328,6 +411,26 @@ export const PROPERTY_TAX_RATES: Record<StateCode, number> = {
   OR: 0.9, // Hood River / Wasco / Sherman effective averages
   WA: 0.7, // Klickitat / Skamania effective averages
 };
+
+/** County-level effective property-tax overrides (round 15 — the Puget
+ *  Sound ledger runs richer levy rates than the Gorge counties). */
+const PROPERTY_TAX_COUNTY_OVERRIDES: Record<string, number> = {
+  "King County": 0.9,
+  "Kitsap County": 0.85,
+};
+
+/** Effective annual property-tax rate for a listing's market — county
+ *  override first (round 15), then the state blend. */
+export function effectiveTaxRate(
+  state: StateCode,
+  county?: string | null
+): number {
+  if (county) {
+    const hit = PROPERTY_TAX_COUNTY_OVERRIDES[county];
+    if (hit !== undefined) return hit;
+  }
+  return PROPERTY_TAX_RATES[state];
+}
 
 /** Annual homeowner insurance as a share of structure value (rough heuristic). */
 export const INSURANCE_RATE = 0.0032;

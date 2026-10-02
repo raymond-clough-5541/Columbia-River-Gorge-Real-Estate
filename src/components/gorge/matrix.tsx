@@ -216,13 +216,16 @@ const CAGR_VALUE_COLORS: Record<CagrTier, string> = {
 export function MatrixView({
   submarkets,
   navigate,
+  regionName = "corridor",
 }: {
   submarkets: Submarket[];
   navigate: NavigateFn;
+  /** Region display word ("corridor" | "region") — round 15. */
+  regionName?: string;
 }) {
   const [stateFilter, setStateFilter] = useState<"all" | "OR" | "WA">("all");
   const [jurisdictionFilter, setJurisdictionFilter] = useState<
-    "all" | "Incorporated City" | "Unincorporated Urban Area"
+    "all" | "Incorporated City" | "Unincorporated Urban Area" | "Unincorporated Rural Area"
   >("all");
   const [sortCol, setSortCol] = useState<SortCol>("net");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
@@ -513,7 +516,7 @@ export function MatrixView({
     <div className="mx-auto w-full max-w-7xl px-4 pb-16 pt-10 sm:px-6 lg:px-8">
       <SectionHeader
         eyebrow="Master Real Estate & Land Inventory Matrix"
-        title="All 11 jurisdictions, one sortable ledger"
+        title={`All ${submarkets.length} jurisdictions, one sortable ledger`}
         description="Filter by state and jurisdiction type, sort any column, and click a row for the infrastructure dossier — water purveyors, wastewater capacity, and fire-risk constraints that gate every buildable acre."
         action={
           <div className="flex items-center gap-2">
@@ -587,7 +590,11 @@ export function MatrixView({
             onValueChange={(v) => {
               if (v)
                 setJurisdictionFilter(
-                  v as "all" | "Incorporated City" | "Unincorporated Urban Area"
+                  v as
+                    | "all"
+                    | "Incorporated City"
+                    | "Unincorporated Urban Area"
+                    | "Unincorporated Rural Area"
                 );
             }}
             className="gap-1"
@@ -596,6 +603,9 @@ export function MatrixView({
             <ToggleGroupItem value="Incorporated City" className="h-8 px-3 text-[13px]">Cities</ToggleGroupItem>
             <ToggleGroupItem value="Unincorporated Urban Area" className="h-8 px-3 text-[13px]">
               Unincorp. UGAs
+            </ToggleGroupItem>
+            <ToggleGroupItem value="Unincorporated Rural Area" className="h-8 px-3 text-[13px]">
+              Rural
             </ToggleGroupItem>
           </ToggleGroup>
         </div>
@@ -662,7 +672,7 @@ export function MatrixView({
                   {fmtAcres(Math.round(pinnedSet.combinedReserve))}
                 </p>
                 <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground tabular-nums">
-                  {fmtPct(pinnedSet.corridorShare)} of corridor reserve
+                  {fmtPct(pinnedSet.corridorShare)} of {regionName} reserve
                 </p>
               </div>
 

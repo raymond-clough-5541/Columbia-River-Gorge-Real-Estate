@@ -589,10 +589,13 @@ export function ListingsView({
   listings,
   submarkets,
   navigate,
+  regionSlug,
 }: {
   listings: PropertyListing[];
   submarkets: Submarket[];
   navigate: NavigateFn;
+  /** Active region slug — scopes the API fetch (round 15). */
+  regionSlug: string;
 }) {
   const [filters, setFilters] = useState<Filters>({
     q: "",
@@ -646,13 +649,16 @@ export function ListingsView({
     [listings]
   );
 
-  // Debounced, API-driven filtering.
+  // Debounced, API-driven filtering. The region param scopes the query so
+  // a multi-region registry never bleeds listings across workspaces
+  // (round 15); the shell's region-scoped props cover the initial state.
   useEffect(() => {
     const controller = new AbortController();
     const timer = setTimeout(async () => {
       setLoading(true);
       try {
         const params = new URLSearchParams();
+        params.set("region", regionSlug);
         if (filters.q.trim()) params.set("q", filters.q.trim());
         if (filters.submarket !== "all") params.set("submarket", filters.submarket);
         if (filters.type !== "all") params.set("type", filters.type);
@@ -676,7 +682,7 @@ export function ListingsView({
       clearTimeout(timer);
       controller.abort();
     };
-  }, [filters]);
+  }, [filters, regionSlug]);
 
   const detail =
     listings.find((l) => l.id === detailId) ??
@@ -701,7 +707,7 @@ export function ListingsView({
     <div className="mx-auto w-full max-w-7xl px-4 pb-16 pt-10 sm:px-6 lg:px-8">
       <SectionHeader
         eyebrow="Micro-Market & Featured Listings Showcase"
-        title="Curated assets across the corridor"
+        title="Curated assets across the ledger"
         description="From the flagship GMA agricultural compound to infill redevelopment plays in Dallesport, Hood River, and White Salmon — every listing cross-referenced against its micro-market's supply and appreciation profile."
       />
 

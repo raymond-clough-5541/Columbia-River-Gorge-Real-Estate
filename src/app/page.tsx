@@ -1,23 +1,27 @@
 import { db } from "@/lib/db";
 import { GorgeApp } from "@/components/gorge/gorge-app";
-import type {
-  CorridorStats,
-  PropertyListing,
-  PropertyType,
-  StateCode,
-  JurisdictionType,
-  Region,
-  RegionStatus,
-  RegionWave,
-  RegionAggregate,
-  Submarket,
+import {
+  DEFAULT_REGION_SLUG,
+  type PropertyListing,
+  type PropertyType,
+  type StateCode,
+  type JurisdictionType,
+  type Region,
+  type RegionStatus,
+  type RegionWave,
+  type RegionAggregate,
+  type Submarket,
 } from "@/lib/gorge";
 
 export const dynamic = "force-dynamic";
 
 /**
- * Server Component entry — fetches the full corridor ledger from SQLite via
- * Prisma on the server and hands it to the client analytics shell.
+ * Server Component entry — fetches the full region-registry ledger from
+ * SQLite via Prisma on the server and hands it to the client analytics
+ * shell. Round 15: ALL regions ship to the client; the shell scopes each
+ * workspace to the active region in the hash route (#/r/<slug>/matrix …).
+ * The SSR stats snapshot stays scoped to the DEFAULT region so the
+ * server-rendered overview matches the post-hydration corridor view.
  */
 export default async function Page() {
   const regionRows = await db.region.findMany({
@@ -124,52 +128,24 @@ export default async function Page() {
       : null,
   }));
 
-  // Corridor-level aggregates for the executive dashboard.
-  const netMid = submarkets.map(
-    (s) => (s.netBuildableAcresMin + s.netBuildableAcresMax) / 2
+  // Default-region (corridor) row — the client shell derives ALL per-region
+  // stats client-side from the full registry (same math, shared helper), so
+  // no server stats need to ship (round 15). The row exists as a guard so a
+  // re-seed that drops the region table surfaces loudly in QA instead of
+  // silently rendering an empty ledger.
+  const defaultRegionRow = regionRows.find(
+    (r) => r.slug === DEFAULT_REGION_SLUG
   );
-  const baselines = submarkets
-    .map((s) => s.baselinePrice2026)
-    .sort((a, b) => a - b);
-  const mid = Math.floor(baselines.length / 2);
-  const depletionYears = submarkets
-    .map((s) => s.depletionYear)
-    .sort((a, b) => a - b);
-
-  const stats: CorridorStats = {
-    submarketCount: submarkets.length,
-    listingCount: listings.length,
-    totalNetBuildableMin: submarkets.reduce((a, s) => a + s.netBuildableAcresMin, 0),
-    totalNetBuildableMid: Math.round(netMid.reduce((a, b) => a + b, 0)),
-    totalNetBuildableMax: submarkets.reduce((a, s) => a + s.netBuildableAcresMax, 0),
-    totalGrossVacant: Math.round(
-      submarkets.reduce((a, s) => a + s.grossVacantAcres, 0)
-    ),
-    regionalMedianPrice:
-      baselines.length === 0
-        ? 0
-        : baselines.length % 2 === 0
-          ? (baselines[mid - 1] + baselines[mid]) / 2
-          : baselines[mid],
-    averageCagr:
-      submarkets.length > 0
-        ? submarkets.reduce((a, s) => a + s.projectedCagr, 0) / submarkets.length
-        : 0,
-    earliestDepletion: depletionYears[0] ?? null,
-    latestDepletion: depletionYears[depletionYears.length - 1] ?? null,
-    orNetBuildable: submarkets
-      .filter((s) => s.state === "OR")
-      .reduce((a, s) => a + (s.netBuildableAcresMin + s.netBuildableAcresMax) / 2, 0),
-    waNetBuildable: submarkets
-      .filter((s) => s.state === "WA")
-      .reduce((a, s) => a + (s.netBuildableAcresMin + s.netBuildableAcresMax) / 2, 0),
-  };
+  if (!defaultRegionRow) {
+    throw new Error(
+      `Seed integrity: default region "${DEFAULT_REGION_SLUG}" missing — re-run bun prisma/seed.ts`
+    );
+  }
 
   return (
     <GorgeApp
       submarkets={submarkets}
       listings={listings}
-      stats={stats}
       regions={regions}
     />
   );

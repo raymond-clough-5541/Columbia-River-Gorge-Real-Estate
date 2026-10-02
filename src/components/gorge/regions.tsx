@@ -45,6 +45,7 @@ import {
   type Submarket,
 } from "@/lib/gorge";
 import { MicroLabel, SectionHeader, StatCard } from "./shared";
+import { REGION_SHORT_NAMES } from "@/lib/region-content";
 import type { NavigateFn } from "./gorge-app";
 
 /* ------------------------------------------------------------------ */
@@ -167,7 +168,12 @@ export function RegionsView({
   const scaffoldCount = regions.filter((r) => r.status === "scaffold").length;
   const plannedCount = regions.filter((r) => r.status === "planned").length;
   const researchCount = regions.filter((r) => r.status === "research").length;
-  const liveRegion = regions.find((r) => r.status === "live") ?? null;
+  const liveMarkets = regions
+    .filter((r) => r.status === "live")
+    .reduce((a, r) => a + (r.aggregate?.marketCount ?? 0), 0);
+  const liveListings = regions
+    .filter((r) => r.status === "live")
+    .reduce((a, r) => a + (r.aggregate?.listingCount ?? 0), 0);
   const targetMarkets = regions.reduce((a, r) => a + r.targetSubmarkets, 0);
 
   const exportCsv = () => {
@@ -229,8 +235,8 @@ export function RegionsView({
           label="Live regions"
           value={liveCount}
           sub={
-            liveRegion
-              ? `${liveRegion.aggregate?.marketCount ?? 0} markets · ${liveRegion.aggregate?.listingCount ?? 0} listings under the 1986 Act`
+            liveCount > 0
+              ? `${liveMarkets} markets · ${liveListings} listings under live ledgers`
               : "—"
           }
           accent="emerald"
@@ -558,11 +564,11 @@ export function RegionsView({
                       type="button"
                       onClick={() => {
                         setDetailSlug(null);
-                        navigate({ view: "matrix" });
+                        navigate({ view: "matrix", region: detail.slug });
                       }}
                       className="mt-3 inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg bg-zinc-900 px-4 text-[13px] font-semibold text-white transition-all hover:opacity-90 active:scale-[0.98] dark:bg-emerald-500 dark:text-zinc-950"
                     >
-                      Open the corridor ledger
+                      Open the {REGION_SHORT_NAMES[detail.slug] === "Columbia River Gorge" ? "corridor" : "region"} ledger
                       <ArrowRight className="h-4 w-4" aria-hidden />
                     </button>
                   </div>
@@ -714,10 +720,10 @@ function LiveRegionCard({
         </div>
         <button
           type="button"
-          onClick={() => navigate({ view: "matrix" })}
+          onClick={() => navigate({ view: "matrix", region: region.slug })}
           className="inline-flex h-9 shrink-0 items-center gap-2 rounded-lg bg-zinc-900 px-4 text-[13px] font-semibold text-white transition-all hover:opacity-90 active:scale-[0.98] dark:bg-emerald-500 dark:text-zinc-950"
         >
-          Open the corridor ledger
+          Open the {REGION_SHORT_NAMES[region.slug] === "Columbia River Gorge" ? "corridor" : "region"} ledger
           <ArrowRight className="h-4 w-4" aria-hidden />
         </button>
       </div>
@@ -756,19 +762,31 @@ function LiveRegionCard({
           to 100 at 2026, compounding at its own CAGR until its depletion
           year, then cooling to the 2.5% replacement rate. The bend in the
           line IS the scarcity story — raw land runs out mid-horizon. */}
-      {composite ? <CompositeCurve composite={composite} /> : null}
+      {composite ? (
+        <CompositeCurve
+          composite={composite}
+          regionWord={
+            REGION_SHORT_NAMES[region.slug] === "Columbia River Gorge"
+              ? "corridor"
+              : (REGION_SHORT_NAMES[region.slug] ?? "region").toLowerCase()
+          }
+        />
+      ) : null}
     </div>
   );
 }
 
 function CompositeCurve({
   composite,
+  regionWord = "corridor",
 }: {
   composite: {
     pts: number[];
     depletionYear: number | null;
     terminalMultiple: number;
   };
+  /** "corridor" for CRGNSA, the region short name otherwise (r15). */
+  regionWord?: string;
 }) {
   const { pts, depletionYear, terminalMultiple } = composite;
   const W = 600;
@@ -788,10 +806,10 @@ function CompositeCurve({
             className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400"
             aria-hidden
           />
-          Corridor composite · depletion-adjusted
+          {regionWord === "corridor" ? "Corridor" : "Region"} composite · depletion-adjusted
         </p>
         <p className="text-[10.5px] text-muted-foreground tabular-nums">
-          $100 of 2026 corridor paper →{" "}
+          $100 of 2026 {regionWord} paper →{" "}
           <span className="font-semibold text-emerald-600 dark:text-emerald-400">
             ${Math.round(terminalMultiple * 100)}
           </span>{" "}
@@ -800,7 +818,7 @@ function CompositeCurve({
       </div>
       <div
         role="img"
-        aria-label={`Corridor composite index, 2026 to 2046: $100 compounds to $${Math.round(
+        aria-label={`${regionWord} composite index, 2026 to 2046: $100 compounds to $${Math.round(
           terminalMultiple * 100
         )} at the blended depletion-adjusted rate${
           depletionYear !== null

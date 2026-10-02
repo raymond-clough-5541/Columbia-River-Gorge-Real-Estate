@@ -1,14 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { DEFAULT_REGION_SLUG } from "@/lib/gorge";
 import type { Prisma } from "@prisma/client";
 
 export const dynamic = "force-dynamic";
 
 // GET /api/listings
-// Query params: submarket (slug), type, minPrice, maxPrice, minAcreage, featured, q (search), sort
+// Query params: region (slug — scopes to a registry region, default the
+// corridor incl. legacy unattached rows), submarket (slug), type, minPrice,
+// maxPrice, minAcreage, featured, q (search), sort
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
+    const region = searchParams.get("region");
     const submarket = searchParams.get("submarket");
     const type = searchParams.get("type");
     const minPrice = searchParams.get("minPrice");
@@ -19,9 +23,20 @@ export async function GET(req: NextRequest) {
     const sort = searchParams.get("sort") ?? "price-desc";
 
     const where: Prisma.PropertyListingWhereInput = {};
-    if (submarket) {
-      where.submarket = { slug: submarket };
+    // Submarket-scope filter — composes the region scope (round 15) with an
+    // optional explicit slug. For the DEFAULT region the scope also inherits
+    // legacy unattached rows (regionId null) so pre-registry data never
+    // falls out of the API's contract.
+    const submarketWhere: Prisma.SubmarketWhereInput = {};
+    if (region) {
+      if (region === DEFAULT_REGION_SLUG) {
+        submarketWhere.OR = [{ region: { slug: region } }, { regionId: null }];
+      } else {
+        submarketWhere.region = { slug: region };
+      }
     }
+    if (submarket) submarketWhere.slug = submarket;
+    if (Object.keys(submarketWhere).length > 0) where.submarket = submarketWhere;
     if (type) where.propertyType = type;
     if (featured === "true") where.featured = true;
 

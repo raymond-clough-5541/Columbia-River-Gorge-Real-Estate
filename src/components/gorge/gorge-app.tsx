@@ -1,14 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { ArrowUp } from "lucide-react";
 import type {
-  CorridorStats,
   PropertyListing,
   Region,
   Submarket,
 } from "@/lib/gorge";
+import {
+  computeRegionStats,
+  submarketsOfRegion,
+  DEFAULT_REGION_SLUG,
+} from "@/lib/gorge";
+import { regionContent } from "@/lib/region-content";
 import { pushRecent } from "@/lib/recents";
 import { SiteHeader } from "./site-header";
 import { SiteFooter } from "./site-footer";
@@ -25,32 +30,50 @@ import { CommandPalette } from "./command-palette";
 /* Hash-based SPA router — keeps the whole experience on the `/`      */
 /* route while giving each analytics workspace its own addressable    */
 /* URL fragment (#/matrix, #/projections, #/submarket/hood-river…).   */
+/*                                                                     */
+/* Round 15 — region scoping: an optional /r/<region-slug> prefix      */
+/* scopes every workspace to one registry region                       */
+/* (#/r/puget-sound/matrix, #/r/puget-sound/submarket/sammamish…).      */
+/* Bare routes keep meaning the DEFAULT region (the corridor), so      */
+/* every share link minted before the region switch still resolves.    */
 /* ---------------------------------------------------------------- */
 
 export type Route =
-  | { view: "overview" }
-  | { view: "matrix" }
-  | { view: "projections"; query?: string }
-  | { view: "listings" }
-  | { view: "submarket"; slug: string }
-  | { view: "regions" };
+  | { view: "overview"; region?: string }
+  | { view: "matrix"; region?: string }
+  | { view: "projections"; query?: string; region?: string }
+  | { view: "listings"; region?: string }
+  | { view: "submarket"; slug: string; region?: string }
+  | { view: "regions"; region?: string };
 
 export type NavigateFn = (route: Route) => void;
 
+/** Canonical region for a route: undefined (bare hash) and the default
+ *  slug both mean the corridor — the default never gets a /r/ prefix so
+ *  there is exactly ONE hash per destination. */
+function canonicalRegion(region: string | undefined): string | undefined {
+  if (!region || region === DEFAULT_REGION_SLUG) return undefined;
+  return region;
+}
+
 export function routeToHash(route: Route): string {
+  const scope = canonicalRegion(route.region);
+  const prefix = scope ? `/r/${scope}` : "";
   switch (route.view) {
     case "overview":
-      return "#/";
+      return scope ? `#/r/${scope}/` : "#/";
     case "matrix":
-      return "#/matrix";
+      return `#${prefix}/matrix`;
     case "projections":
       // An optional hash query (share links, KPI drilldown presets) rides
       // along; parseHash strips it, the Projections view adopts it on mount.
-      return route.query ? `#/projections?${route.query}` : "#/projections";
+      return route.query
+        ? `#${prefix}/projections?${route.query}`
+        : `#${prefix}/projections`;
     case "listings":
-      return "#/listings";
+      return `#${prefix}/listings`;
     case "submarket":
-      return `#/submarket/${route.slug}`;
+      return `#${prefix}/submarket/${route.slug}`;
     case "regions":
       return "#/regions";
   }
@@ -58,22 +81,32 @@ export function routeToHash(route: Route): string {
 
 export function parseHash(hash: string): Route {
   const clean = hash.replace(/^#\/?/, "").split("?")[0];
-  const parts = clean.split("/").filter(Boolean);
-  if (parts.length === 0) return { view: "overview" };
-  if (parts[0] === "matrix") return { view: "matrix" };
-  if (parts[0] === "projections") return { view: "projections" };
-  if (parts[0] === "listings") return { view: "listings" };
+  let parts = clean.split("/").filter(Boolean);
+
+  // Region scope prefix: /r/<slug>/… — normalized away for the default
+  // region so bare corridor routes stay the canonical form.
+  let region: string | undefined;
+  if (parts[0] === "r" && parts[1]) {
+    region = canonicalRegion(parts[1]);
+    parts = parts.slice(2);
+  }
+
+  if (parts.length === 0) return { view: "overview", region };
+  if (parts[0] === "matrix") return { view: "matrix", region };
+  if (parts[0] === "projections") return { view: "projections", region };
+  if (parts[0] === "listings") return { view: "listings", region };
   if (parts[0] === "regions") return { view: "regions" };
   if (parts[0] === "submarket" && parts[1]) {
-    return { view: "submarket", slug: parts[1] };
+    return { view: "submarket", slug: parts[1], region };
   }
-  return { view: "overview" };
+  return { view: "overview", region };
 }
 
 export function routeKey(route: Route): string {
+  const scope = canonicalRegion(route.region) ?? DEFAULT_REGION_SLUG;
   return route.view === "submarket"
-    ? `submarket-${route.slug}`
-    : route.view;
+    ? `${scope}-submarket-${route.slug}`
+    : `${scope}-${route.view}`;
 }
 
 /* ---------------------------------------------------------------- */
@@ -106,7 +139,6 @@ function subscribeHash(cb: () => void): () => void {
 export interface GorgeAppProps {
   submarkets: Submarket[];
   listings: PropertyListing[];
-  stats: CorridorStats;
   regions: Region[];
 }
 
@@ -151,7 +183,6 @@ function BackToTop() {
 export function GorgeApp({
   submarkets,
   listings,
-  stats,
   regions,
 }: GorgeAppProps) {
   const route = useSyncExternalStore(subscribeHash, getHashRoute, () => SERVER_ROUTE);
@@ -181,6 +212,67 @@ export function GorgeApp({
     }
   }, []);
 
+  /* ------------------ Round 15 — region scoping ------------------ */
+  // The active region resolves from the route (bare = corridor). All
+  // downstream data is derived client-side from the full registry the
+  // server already shipped — no refetch, instant region switches.
+  const activeRegionSlug = route.region ?? DEFAULT_REGION_SLUG;
+  const activeRegion = useMemo(
+    () =>
+      regions.find((r) => r.slug === activeRegionSlug) ?? {
+        // Degenerate fallback keeps views alive even for an unknown slug.
+        id: "",
+        slug: activeRegionSlug,
+        name: activeRegionSlug,
+        country: "USA",
+        statesProvinces: "",
+        wave: "core",
+        status: "live",
+        scarcityHook: "",
+        regulatoryContext: "",
+        taxArbitrageNote: "",
+        targetSubmarkets: 0,
+        launchOrder: 999,
+        launchedAt: null,
+        aggregate: null,
+      },
+    [regions, activeRegionSlug]
+  );
+
+  const regionSubmarkets = useMemo(
+    () => submarketsOfRegion(submarkets, activeRegion),
+    [submarkets, activeRegion]
+  );
+  const regionListings = useMemo(
+    () =>
+      listings.filter((l) =>
+        regionSubmarkets.some((s) => s.id === l.submarketId)
+      ),
+    [listings, regionSubmarkets]
+  );
+  const regionStats = useMemo(
+    () => computeRegionStats(regionSubmarkets, regionListings.length),
+    [regionSubmarkets, regionListings]
+  );
+  const content = useMemo(
+    () => regionContent(activeRegionSlug),
+    [activeRegionSlug]
+  );
+
+  // Region-preserving navigate: every in-view navigation (rows, chips,
+  // leaderboard, comparables, shortcuts) keeps the active region unless
+  // the caller explicitly targets another one or the registry view.
+  const scopedNavigate: NavigateFn = useCallback(
+    (next: Route) => {
+      if (next.view === "regions") {
+        navigate(next);
+        return;
+      }
+      navigate({ ...next, region: next.region ?? activeRegionSlug });
+    },
+    [navigate, activeRegionSlug]
+  );
+
   // Scroll to top whenever the workspace changes.
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "instant" as ScrollBehavior });
@@ -190,11 +282,14 @@ export function GorgeApp({
     <div className="flex min-h-screen flex-col bg-background">
       <SiteHeader
         route={route}
+        regions={regions}
+        activeRegionSlug={activeRegionSlug}
+        navigate={navigate}
         onOpenShortcuts={() => setShortcutsOpen(true)}
         onOpenPalette={() => setPaletteOpen(true)}
       />
       <KeyboardShortcuts
-        navigate={navigate}
+        navigate={scopedNavigate}
         helpOpen={shortcutsOpen}
         onHelpOpenChange={setShortcutsOpen}
       />
@@ -204,6 +299,7 @@ export function GorgeApp({
         navigate={navigate}
         submarkets={submarkets}
         listings={listings}
+        regions={regions}
         onOpenShortcuts={() => setShortcutsOpen(true)}
       />
       <main className="flex-1">
@@ -217,31 +313,42 @@ export function GorgeApp({
           >
             {route.view === "overview" ? (
               <OverviewView
-                submarkets={submarkets}
-                stats={stats}
-                listings={listings}
-                navigate={navigate}
+                submarkets={regionSubmarkets}
+                stats={regionStats}
+                listings={regionListings}
+                navigate={scopedNavigate}
+                content={content}
               />
             ) : null}
             {route.view === "matrix" ? (
-              <MatrixView submarkets={submarkets} navigate={navigate} />
+              <MatrixView
+                submarkets={regionSubmarkets}
+                navigate={scopedNavigate}
+                regionName={content.scopeWord}
+              />
             ) : null}
             {route.view === "projections" ? (
-              <ProjectionsView submarkets={submarkets} navigate={navigate} />
+              <ProjectionsView
+                submarkets={regionSubmarkets}
+                navigate={scopedNavigate}
+                regionName={content.scopeWord}
+              />
             ) : null}
             {route.view === "listings" ? (
               <ListingsView
-                listings={listings}
-                submarkets={submarkets}
-                navigate={navigate}
+                listings={regionListings}
+                submarkets={regionSubmarkets}
+                navigate={scopedNavigate}
+                regionSlug={activeRegionSlug}
               />
             ) : null}
             {route.view === "submarket" ? (
               <SubmarketDetailView
                 slug={route.slug}
-                submarkets={submarkets}
-                listings={listings}
-                navigate={navigate}
+                submarkets={regionSubmarkets}
+                listings={regionListings}
+                navigate={scopedNavigate}
+                regionName={content.scopeWord}
               />
             ) : null}
             {route.view === "regions" ? (
@@ -255,7 +362,7 @@ export function GorgeApp({
         </AnimatePresence>
       </main>
       <BackToTop />
-      <SiteFooter />
+      <SiteFooter navigate={scopedNavigate} />
     </div>
   );
 }

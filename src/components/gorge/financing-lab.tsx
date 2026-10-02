@@ -26,7 +26,7 @@ import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
 import {
   INSURANCE_RATE,
-  PROPERTY_TAX_RATES,
+  effectiveTaxRate,
   REAL_TERMS_INFLATION,
   RENTAL_RESERVE_RATE,
   estimateMarketRent,
@@ -82,6 +82,9 @@ export function FinancingLab({ listing }: { listing: PropertyListing }) {
     realTerms ? realValue(nominal, REAL_TERMS_INFLATION, years) : nominal;
 
   const state = listing.submarket?.state ?? "OR";
+  // County-aware effective rate (round 15): King/Kitsap overrides for the
+  // Puget ledger, state blends otherwise.
+  const taxRate = effectiveTaxRate(state, listing.submarket?.county);
   const baseRent = useMemo(
     () => estimateMarketRent(listing, { seasonality }),
     [listing, seasonality]
@@ -94,7 +97,7 @@ export function FinancingLab({ listing }: { listing: PropertyListing }) {
     const down = (price * downPct) / 100;
     const loan = price - down;
     const pi = monthlyPayment(loan, rate, term);
-    const taxMonthly = (price * PROPERTY_TAX_RATES[state]) / 100 / 12;
+    const taxMonthly = (price * taxRate) / 100 / 12;
     const insMonthly = isLand ? 0 : (price * INSURANCE_RATE) / 12;
     const totalMonthly = pi + taxMonthly + insMonthly;
     const interest = totalInterest(loan, rate, term);
@@ -175,7 +178,7 @@ export function FinancingLab({ listing }: { listing: PropertyListing }) {
         cashOnCash: down > 0 ? (noi - totalMonthly * 12) / down : 0,
       },
     };
-  }, [listing, listing.price, listing.submarket?.projectedCagr, downPct, rate, term, state, isLand, baseRent, postureMult]);
+  }, [listing, listing.price, listing.submarket?.projectedCagr, downPct, rate, term, state, taxRate, isLand, baseRent, postureMult]);
 
   // Real-terms display family (round 13): value path deflated, balance
   // contractual. The multiple swaps to the real equity over the same
@@ -289,9 +292,14 @@ export function FinancingLab({ listing }: { listing: PropertyListing }) {
               note: `${fmtCurrency(calc.loan, { compact: true })} note`,
             },
             {
-              label: `Property tax · ${fmtPct(PROPERTY_TAX_RATES[state], 2)} eff.`,
+              label: `Property tax · ${fmtPct(taxRate, 2)} eff.`,
               value: fmtCurrency(Math.round(calc.taxMonthly)),
-              note: `${state === "WA" ? "Klickitat/Skamania" : "HR/Wasco"} blend`,
+              note:
+                listing.submarket?.county?.startsWith("King")
+                  ? "King County blend"
+                  : listing.submarket?.county?.startsWith("Kitsap")
+                    ? "Kitsap County blend"
+                    : `${state === "WA" ? "Klickitat/Skamania" : "HR/Wasco"} blend`,
             },
             {
               label: "Insurance",

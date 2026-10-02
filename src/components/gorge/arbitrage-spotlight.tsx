@@ -239,3 +239,251 @@ export function ArbitrageSpotlight() {
     </div>
   );
 }
+
+/* ================================================================== */
+/* Round 15 — Puget Sound variant: the WA-vs-CA equity-exodus spread. */
+/* ================================================================== */
+
+import { Ship, TrainFront } from "lucide-react";
+
+/* California 2025 single-filer progressive brackets + std deduction
+   (illustrative, tier-consolidated where the steps are sub-0.5%). */
+const CA_STD_DEDUCTION = 5540;
+const CA_BRACKETS = [
+  { upTo: 10756, rate: 0.01 },
+  { upTo: 25499, rate: 0.02 },
+  { upTo: 40245, rate: 0.04 },
+  { upTo: 55866, rate: 0.06 },
+  { upTo: 70606, rate: 0.08 },
+  { upTo: 360659, rate: 0.093 },
+  { upTo: 432787, rate: 0.103 },
+  { upTo: 721314, rate: 0.113 },
+  { upTo: 1442584, rate: 0.123 },
+  { upTo: Infinity, rate: 0.133 },
+];
+
+function caIncomeTax(income: number): number {
+  const taxable = Math.max(0, income - CA_STD_DEDUCTION);
+  let tax = 0;
+  let lower = 0;
+  for (const b of CA_BRACKETS) {
+    if (taxable > lower) {
+      const slice = Math.min(taxable, b.upTo) - lower;
+      tax += slice * b.rate;
+      lower = b.upTo;
+    } else break;
+  }
+  return tax;
+}
+
+/** How a Seattle-wage household actually captures the spread. */
+const CAPTURE_PAIRS = [
+  {
+    icon: Ship,
+    residence: "Bainbridge Island",
+    workplace: "Downtown Seattle",
+    link: "WSF ferry · ≈ 35 min",
+    note: "Island residency with Seattle wages — the zero-income-tax capture at salt-water commute distance.",
+  },
+  {
+    icon: TrainFront,
+    residence: "Snoqualmie",
+    workplace: "Eastside tech campuses",
+    link: "I-90 · ≈ 25–35 min",
+    note: "Ridge-side residency against Bellevue/Redmond payrolls — the I-90 corridor is the arbitrage's delivery channel.",
+  },
+];
+
+export function PugetArbitrageSpotlight() {
+  const [income, setIncome] = useState(250000);
+  const [cagr, setCagr] = useState(5.1);
+
+  const calc = useMemo(() => {
+    const caTax = caIncomeTax(income);
+    const annualSaving = caTax;
+    const compounded = annualSaving * Math.pow(1 + cagr / 100, 20);
+    const effectiveRate = income > 0 ? (caTax / income) * 100 : 0;
+    return { caTax, annualSaving, compounded, effectiveRate };
+  }, [income, cagr]);
+
+  return (
+    <div className="grid gap-4 lg:grid-cols-5">
+      {/* Two-sided tax comparison */}
+      <div className="rounded-xl border bg-card p-5 shadow-sm lg:col-span-2">
+        <MicroLabel>Residency Arbitrage</MicroLabel>
+        <h3 className="mt-1.5 text-lg font-semibold tracking-tight">
+          Two states, one tech labor market
+        </h3>
+
+        <div className="mt-4 space-y-3">
+          <div className="rounded-lg border border-teal-500/30 bg-teal-500/[0.06] p-4">
+            <div className="flex items-center justify-between">
+              <span className="flex items-center gap-2 text-sm font-semibold">
+                <Landmark className="h-4 w-4 text-teal-600 dark:text-teal-400" aria-hidden />
+                Washington
+              </span>
+              <span className="text-xl font-semibold tabular-nums text-teal-600 dark:text-teal-400">
+                0.0%
+              </span>
+            </div>
+            <p className="mt-2 text-[12.5px] leading-relaxed text-muted-foreground">
+              No personal income tax on wages — the statute that has priced
+              King County land since 1990. (A 7% capital-gains excise applies
+              above ~$270k of annual long-term gains; wages remain untouched.)
+            </p>
+          </div>
+
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/[0.06] p-4">
+            <div className="flex items-center justify-between">
+              <span className="flex items-center gap-2 text-sm font-semibold">
+                <Landmark className="h-4 w-4 text-amber-600 dark:text-amber-400" aria-hidden />
+                California
+              </span>
+              <span className="text-xl font-semibold tabular-nums text-amber-600 dark:text-amber-400">
+                13.3%
+              </span>
+            </div>
+            <p className="mt-2 text-[12.5px] leading-relaxed text-muted-foreground">
+              The top marginal bracket on income above ≈$1.44M — with 9.3%
+              starting at ≈$70k. The equity-exodus demand that clears $1.4M
+              island medians starts here.
+            </p>
+            <div className="mt-3 space-y-1 border-t border-amber-500/20 pt-3 text-[11px] tabular-nums text-muted-foreground">
+              <div className="flex justify-between"><span>Up to $70,606</span><span>1–8% progressive</span></div>
+              <div className="flex justify-between"><span>$70,606 – $360,659</span><span>9.3%</span></div>
+              <div className="flex justify-between"><span>$360,659 – $1.44M</span><span>10.3–12.3%</span></div>
+              <div className="flex justify-between"><span>Above $1.44M</span><span>13.3%</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Calculator */}
+      <div className="rounded-xl border bg-card p-5 shadow-sm lg:col-span-3">
+        <div className="flex items-center gap-2">
+          <Calculator className="h-4 w-4 text-muted-foreground" aria-hidden />
+          <MicroLabel>Exodus Arbitrage Calculator</MicroLabel>
+        </div>
+        <h3 className="mt-1.5 text-lg font-semibold tracking-tight">
+          What a California-to-Washington move is worth, compounded
+        </h3>
+
+        <div className="mt-5 grid gap-5 sm:grid-cols-2">
+          <div>
+            <div className="mb-2 flex items-baseline justify-between">
+              <label htmlFor="arb-puget-income" className="text-[13px] text-muted-foreground">
+                Household income
+              </label>
+              <span className="text-sm font-semibold tabular-nums">
+                {fmtCurrency(income)}
+              </span>
+            </div>
+            <Slider
+              id="arb-puget-income"
+              value={[income]}
+              onValueChange={(v) => setIncome(v[0])}
+              min={100000}
+              max={2000000}
+              step={10000}
+              aria-label="Household income"
+            />
+          </div>
+          <div>
+            <div className="mb-2 flex items-baseline justify-between">
+              <label htmlFor="arb-puget-cagr" className="text-[13px] text-muted-foreground">
+                Reinvestment CAGR
+              </label>
+              <span className="text-sm font-semibold tabular-nums">
+                {fmtPct(cagr)}
+              </span>
+            </div>
+            <Slider
+              id="arb-puget-cagr"
+              value={[cagr]}
+              onValueChange={(v) => setCagr(v[0])}
+              min={3}
+              max={8}
+              step={0.1}
+              aria-label="Reinvestment CAGR"
+            />
+          </div>
+        </div>
+
+        <div className="mt-6 grid gap-3 sm:grid-cols-3">
+          <div className="rounded-lg border bg-background p-4">
+            <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+              CA estimated tax / yr
+            </p>
+            <p className="mt-1.5 text-lg font-semibold tabular-nums text-amber-600 dark:text-amber-400">
+              {fmtCurrency(calc.caTax)}
+            </p>
+            <p className="mt-1 text-[11px] text-muted-foreground tabular-nums">
+              eff. {fmtPct(calc.effectiveRate)} · single filer
+            </p>
+          </div>
+          <div className="rounded-lg border bg-background p-4">
+            <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+              WA income tax / yr
+            </p>
+            <p className="mt-1.5 text-lg font-semibold tabular-nums text-teal-600 dark:text-teal-400">
+              $0
+            </p>
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              wages + passive income
+            </p>
+          </div>
+          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/[0.07] p-4">
+            <p className="text-[11px] uppercase tracking-[0.14em] text-emerald-700 dark:text-emerald-400">
+              20-yr compounded spread
+            </p>
+            <p className="mt-1.5 text-lg font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
+              {fmtCurrency(calc.compounded, { compact: true })}
+            </p>
+            <p className="mt-1 text-[11px] text-muted-foreground tabular-nums">
+              {fmtCurrency(calc.annualSaving)} / yr reinvested at {fmtPct(cagr)}
+            </p>
+          </div>
+        </div>
+
+        {/* Capture pairs */}
+        <div className="mt-6 border-t pt-4">
+          <MicroLabel>Where the Spread Gets Captured</MicroLabel>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            {CAPTURE_PAIRS.map((c) => (
+              <div
+                key={c.residence}
+                className="flex items-center gap-3 rounded-lg border bg-background p-3.5"
+              >
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted">
+                  <c.icon className="h-4 w-4" aria-hidden />
+                </span>
+                <div className="min-w-0">
+                  <p className="flex flex-wrap items-center gap-1 text-[13px] font-semibold">
+                    {c.residence}
+                    <span className="text-muted-foreground">· WA</span>
+                    <span className="text-muted-foreground">⟷</span>
+                    {c.workplace}
+                  </p>
+                  <p className="text-[11.5px] text-muted-foreground">{c.link}</p>
+                  <p className="mt-1 text-[11.5px] leading-snug text-muted-foreground">
+                    {c.note}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <p className="mt-4 text-[11px] leading-relaxed text-muted-foreground">
+          <Wallet className="mr-1 inline h-3 w-3 align-[-1px]" aria-hidden />
+          Wages earned physically inside California remain CA-source income
+          even for Washington residents — the clean arbitrage applies to
+          Washington-source, remote-work, retirement, and investment income.
+          Washington's 7% capital-gains excise (long-term gains above ~$270k)
+          is acknowledged; it does not touch wages. Bracket math is
+          illustrative (2025 single filer, standard deduction).
+        </p>
+      </div>
+    </div>
+  );
+}
