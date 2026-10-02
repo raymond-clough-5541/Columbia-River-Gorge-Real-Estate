@@ -1,0 +1,19 @@
+{
+  "name": "portable-chat-service",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --hot index.ts",
+    "start": "bun index.ts",
+    "self-test": "bun self-test.mjs"
+  },
+  "dependencies": {
+    "jsonwebtoken": "9",
+    "socket.io": "^4.7.0"
+  },
+  "devDependencies": {
+    "@types/jsonwebtoken": "^9.0.10",
+    "socket.io-client": "^4.7.0"
+  }
+}

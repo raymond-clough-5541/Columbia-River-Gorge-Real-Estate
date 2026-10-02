@@ -1,0 +1,47 @@
+{
+  "name": "ft-lookup-privacy-wall",
+  "description": "R210 P2 (security plan section 2 / section 5): the lookup privacy wall on the 200 leg, BOTH directions. Sam Rivera (site_mod, the real scrypt door) reads the lookup door: Jordan's row (showEmail false) must render with the email ABSENT from the API body everywhere (search + detail + history), and Alex's row (showEmail true) must render WITH the email present - the wall is per-persona, enforced in the projection, not the UI.",
+  "base": "http://localhost:3000",
+  "viewport": "1280x900",
+  "settleMs": 2500,
+  "navRetries": 2,
+  "steps": [
+    { "action": "clear" },
+    {
+      "action": "nav",
+      "url": "/?surface=welcome",
+      "expectText": "Sign In",
+      "timeout": 30000
+    },
+    { "action": "click", "role": "tab", "name": "Sign In" },
+    { "action": "fill", "label": "Email", "text": "sam@freetrader.app" },
+    { "action": "fill", "label": "Password", "text": "testpass123" },
+    { "action": "press", "key": "Enter" },
+    { "action": "wait", "text": "Vintage steel road bike", "timeout": 20000, "critical": true },
+    { "action": "expect", "urlContains": "surface=app" },
+    {
+      "action": "evalExpect",
+      "name": "lookup-search-200-jordan-row-email-hidden",
+      "expr": "(() => { const x = new XMLHttpRequest(); x.open('GET', '/api/moderation/user-lookup?q=jordan', false); x.send(); const b = x.responseText; return 'status=' + x.status + ' row=' + (b.includes('Jordan Lee') ? 'present' : 'absent') + ' emailLeak=' + (b.includes('jordan@example.com') ? 'TRUE' : 'false') })()",
+      "contains": "status=200 row=present emailLeak=false"
+    },
+    {
+      "action": "evalExpect",
+      "name": "lookup-detail-200-jordan-email-hidden",
+      "expr": "(() => { const x = new XMLHttpRequest(); x.open('GET', '/api/moderation/user-lookup?userId=u_me', false); x.send(); const b = x.responseText; const h = ((JSON.parse(b) || {}).history) || []; return 'status=' + x.status + ' row=' + (b.includes('Jordan Lee') ? 'present' : 'absent') + ' emailLeak=' + (b.includes('jordan@example.com') ? 'TRUE' : 'false') + ' historyRows=' + h.length })()",
+      "contains": "status=200 row=present emailLeak=false"
+    },
+    {
+      "action": "evalExpect",
+      "name": "lookup-search-200-alex-row-email-shown",
+      "expr": "(() => { const x = new XMLHttpRequest(); x.open('GET', '/api/moderation/user-lookup?q=alex', false); x.send(); const b = x.responseText; return 'status=' + x.status + ' row=' + (b.includes('Alex Chen') ? 'present' : 'absent') + ' emailShown=' + (b.includes('alex@freetrader.app') ? 'true' : 'FALSE') })()",
+      "contains": "status=200 row=present emailShown=true"
+    },
+    {
+      "action": "evalExpect",
+      "name": "lookup-no-match-honest-empty",
+      "expr": "(() => { const x = new XMLHttpRequest(); x.open('GET', '/api/moderation/user-lookup?q=zzz-nobody-r210', false); x.send(); const b = x.responseText; return 'status=' + x.status + ' users=' + ((JSON.parse(b) || {}).users || []).length })()",
+      "contains": "status=200 users=0"
+    }
+  ]
+}

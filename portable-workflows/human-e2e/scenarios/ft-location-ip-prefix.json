@@ -1,0 +1,298 @@
+{
+  "name": "ft-location-ip-prefix",
+  "description": "R210 P2 (security plan section 3): the IP-prefix variation walks, re-based to the live local-mode app. The RFC-5737 table's labels (198.51.100.x -> TX, 203.0.113.x -> CO, loopback -> null) stay pinned by the r120 vitest suite; this E2E drives the VIEWS those labels produce through the REAL doors. LOCAL-MODE REWORK (disclosed in the results doc): the r120-era state seam (the persisted ft_location_context blob) no longer drives the doors after the R195 flip - the doors resolve the viewer's region SERVER-SIDE from the session profile row (route.ts: 'userState/userCity come from the VIEWER profile, the server-side source, never a client-asserted region'), so the out-of-region viewer is minted the honest local way: a fresh member registered WITH a CO city/state through the REAL register door (the register form's own optional location, R169 W-3), and the in-region/member legs ride Jordan (Austin/TX) whose profile location is edited through the REAL Settings door and restored. Legs: the honest loopback derivation (GET /api/location-context -> coarseRegion null); the IN-REGION leg (the TX-profile feed renders, the view the in-region coarse label produces - the r120 walk never asserted this leg); the MEMBER region-gate proof (Jordan edited to Denver/CO: the g_austin shell still opens for the member but its located-group posts gate to 0, restored to Austin/TX the posts return - the symmetric control); the OUT-OF-REGION default view (the CO-profile member: the feed drops all TX content, the groups directory loses the located TX groups while the unlocated ones pass, the g_austin shell reachable with 0 posts - for a non-member the privacy gate refuses first, disclosed - the unlocated g_bikes post renders as the positive control, RELOAD SURVIVAL); the explicit override (Nationwide) reveals the region again.",
+  "base": "http://localhost:3000",
+  "viewport": "1280x900",
+  "settleMs": 3000,
+  "navRetries": 3,
+  "steps": [
+    {
+      "action": "clear"
+    },
+    {
+      "action": "nav",
+      "url": "/?surface=welcome",
+      "expectText": "Sign In",
+      "shot": "01-jordan-fresh-welcome",
+      "timeout": 30000
+    },
+    {
+      "action": "click",
+      "role": "tab",
+      "name": "Sign In"
+    },
+    {
+      "action": "fill",
+      "label": "Email",
+      "text": "jordan@example.com"
+    },
+    {
+      "action": "fill",
+      "label": "Password",
+      "text": "testpass123"
+    },
+    {
+      "action": "press",
+      "key": "Enter"
+    },
+    {
+      "action": "wait",
+      "text": "Vintage steel road bike",
+      "timeout": 20000,
+      "critical": true
+    },
+    {
+      "action": "expect",
+      "urlContains": "surface=app"
+    },
+    {
+      "action": "evalExpect",
+      "name": "honest-loopback-derivation-null",
+      "expr": "(() => { const x = new XMLHttpRequest(); x.open('GET', '/api/location-context', false); x.send(); return 'status=' + x.status + ' body=' + x.responseText.substring(0, 80) })()",
+      "contains": "status=200 body={\\\"coarseRegion\\\":null"
+    },
+    {
+      "action": "evalExpect",
+      "name": "in-region-feed-tx-content",
+      "expr": "(() => { const n = document.querySelectorAll('.ft-stagger > *').length; return 'cards=' + (n === 0 ? 'zero' : 'positive') + ' bike=' + document.body.innerText.includes('Vintage steel road bike') })()",
+      "contains": "cards=positive bike=true"
+    },
+    {
+      "action": "shot",
+      "label": "02-in-region-tx-feed",
+      "expectText": "Vintage steel road bike"
+    },
+    {
+      "action": "nav",
+      "url": "/?surface=app&page=settings",
+      "expectText": "Save changes",
+      "timeout": 30000
+    },
+    {
+      "action": "fill",
+      "label": "City",
+      "text": "Denver"
+    },
+    {
+      "action": "fill",
+      "label": "State",
+      "text": "CO"
+    },
+    {
+      "action": "click",
+      "role": "button",
+      "name": "Save changes",
+      "critical": true
+    },
+    {
+      "action": "wait",
+      "text": "Profile saved",
+      "timeout": 15000,
+      "critical": true
+    },
+    {
+      "action": "nav",
+      "url": "/?surface=app&page=group-detail&groupId=g_austin",
+      "expectText": "Austin Traders",
+      "shot": "03-out-of-region-member-posts-gated",
+      "timeout": 45000
+    },
+    {
+      "action": "evalExpect",
+      "name": "member-posts-gated-by-region",
+      "expr": "(() => 'shell=' + (document.body.innerText.includes('Austin Traders') ? 'open' : 'closed') + ' posts=' + document.querySelectorAll('[data-testid=group-post-card]').length)()",
+      "contains": "shell=open posts=0"
+    },
+    {
+      "action": "nav",
+      "url": "/?surface=app&page=settings",
+      "expectText": "Save changes",
+      "timeout": 30000
+    },
+    {
+      "action": "fill",
+      "label": "City",
+      "text": "Austin"
+    },
+    {
+      "action": "fill",
+      "label": "State",
+      "text": "TX"
+    },
+    {
+      "action": "click",
+      "role": "button",
+      "name": "Save changes",
+      "critical": true
+    },
+    {
+      "action": "wait",
+      "text": "Profile saved",
+      "timeout": 15000,
+      "critical": true
+    },
+    {
+      "action": "nav",
+      "url": "/?surface=app&page=group-detail&groupId=g_austin",
+      "expectText": "Austin Traders",
+      "shot": "04-in-region-control-posts-back",
+      "timeout": 45000
+    },
+    {
+      "action": "evalExpect",
+      "name": "in-region-control-posts-back",
+      "expr": "(() => 'shell=' + (document.body.innerText.includes('Austin Traders') ? 'open' : 'closed') + ' posts=' + document.querySelectorAll('[data-testid=group-post-card]').length)()",
+      "contains": "shell=open posts=2"
+    },
+    {
+      "action": "clear"
+    },
+    {
+      "action": "nav",
+      "url": "/?surface=welcome",
+      "expectText": "Sign In",
+      "timeout": 30000
+    },
+    {
+      "action": "click",
+      "role": "tab",
+      "name": "Sign Up"
+    },
+    {
+      "action": "fill",
+      "label": "Full name",
+      "text": "Riley Denver"
+    },
+    {
+      "action": "fill",
+      "label": "Email",
+      "text": "r210-coviewer@example.com"
+    },
+    {
+      "action": "fill",
+      "label": "Password",
+      "text": "r210-walk-pass-2"
+    },
+    {
+      "action": "fill",
+      "label": "City",
+      "text": "Denver"
+    },
+    {
+      "action": "fill",
+      "label": "State",
+      "text": "CO"
+    },
+    {
+      "action": "click",
+      "role": "checkbox",
+      "name": "I agree to the"
+    },
+    {
+      "action": "click",
+      "role": "button",
+      "name": "Create account",
+      "critical": true
+    },
+    {
+      "action": "wait",
+      "text": "We're reviewing your account",
+      "timeout": 25000,
+      "critical": true
+    },
+    {
+      "action": "click",
+      "role": "button",
+      "name": "Browse feed",
+      "expectText": "Nothing here yet",
+      "shot": "05-out-of-region-feed-drops-tx",
+      "timeout": 20000
+    },
+    {
+      "action": "evalExpect",
+      "name": "out-of-region-feed-zero-cards-server-side-source",
+      "expr": "(() => { const n = document.querySelectorAll('.ft-stagger > *').length; const raw = localStorage.getItem('ft_location_context'); let coarse = 'absent'; if (raw) { try { coarse = String((JSON.parse(raw) || {}).coarseRegion) } catch (e) { coarse = 'unparsable' } } return 'cards=' + n + ' clientBlobCarriesCo=' + (coarse === 'CO') })()",
+      "contains": "cards=0 clientBlobCarriesCo=false"
+    },
+    {
+      "action": "nav",
+      "url": "/?surface=app&page=groups",
+      "expectText": "Groups",
+      "shot": "06-out-of-region-groups-directory",
+      "timeout": 45000
+    },
+    {
+      "action": "evalExpect",
+      "name": "located-groups-gone-unlocated-pass",
+      "expr": "(() => { const a = document.querySelector('[data-testid=open-group-g_austin]'); const b = document.querySelector('[data-testid=open-group-g_bikes]'); return 'austin=' + (a ? 'present' : 'gone') + ' bikes=' + (b ? 'present' : 'gone') })()",
+      "contains": "austin=gone bikes=present"
+    },
+    {
+      "action": "nav",
+      "url": "/?surface=app&page=group-detail&groupId=g_austin",
+      "expectText": "Austin Traders",
+      "timeout": 45000
+    },
+    {
+      "action": "evalExpect",
+      "name": "located-group-shell-open-posts-empty",
+      "expr": "(() => 'shell=' + (document.body.innerText.includes('Austin Traders') ? 'open' : 'closed') + ' posts=' + document.querySelectorAll('[data-testid=group-post-card]').length)()",
+      "contains": "shell=open posts=0"
+    },
+    {
+      "action": "nav",
+      "url": "/?surface=app&page=group-detail&groupId=g_bikes",
+      "expectText": "Austin Bike Builders",
+      "timeout": 45000
+    },
+    {
+      "action": "evalExpect",
+      "name": "unlocated-group-posts-pass-positive-control",
+      "expr": "(() => 'shell=' + (document.body.innerText.includes('Austin Bike Builders') ? 'open' : 'closed') + ' posts=' + document.querySelectorAll('[data-testid=group-post-card]').length)()",
+      "contains": "shell=open posts=1"
+    },
+    {
+      "action": "nav",
+      "url": "/?surface=app&page=feed",
+      "expectText": "Nothing here yet",
+      "timeout": 45000
+    },
+    {
+      "action": "evalExpect",
+      "name": "reload-survival-still-gated",
+      "expr": "(() => 'cards=' + document.querySelectorAll('.ft-stagger > *').length)()",
+      "contains": "cards=0"
+    },
+    {
+      "action": "click",
+      "role": "button",
+      "name": "Advanced filters",
+      "timeout": 15000
+    },
+    {
+      "action": "click",
+      "text": "My state (default)",
+      "timeout": 12000
+    },
+    {
+      "action": "click",
+      "role": "option",
+      "name": "Nationwide",
+      "timeout": 12000
+    },
+    {
+      "action": "click",
+      "role": "button",
+      "name": "Apply",
+      "expectText": "Vintage steel road bike",
+      "timeout": 20000,
+      "shot": "07-override-reveals-the-region"
+    },
+    {
+      "action": "evalExpect",
+      "name": "override-feed-repopulated",
+      "expr": "(() => { const n = document.querySelectorAll('.ft-stagger > *').length; return 'count=' + (n === 0 ? 'zero' : 'positive') })()",
+      "contains": "count=positive"
+    }
+  ]
+}

@@ -1,0 +1,120 @@
+{
+  "name": "ft-location-denied-toast",
+  "description": "R210 P2 (security plan section 3): the permission-DENIED path - the honest denial toast (quick-filters.tsx:180-209). A FRESH member with NO profile location is registered through the REAL register door (city and state left empty - every seeded persona carries a TX location, so a fresh no-location account is the only honest way to reach the unknown-region state). The feed's Filters sheet must render the ask row; a REAL click on 'Use my device location' meets the headless browser's denial; the honest toast renders verbatim; NO grant is persisted.",
+  "base": "http://localhost:3000",
+  "viewport": "1280x900",
+  "settleMs": 2500,
+  "navRetries": 2,
+  "steps": [
+    {
+      "action": "clear"
+    },
+    {
+      "action": "nav",
+      "url": "/?surface=welcome",
+      "expectText": "Sign In",
+      "shot": "01-fresh-welcome",
+      "timeout": 30000
+    },
+    {
+      "action": "click",
+      "role": "tab",
+      "name": "Sign Up"
+    },
+    {
+      "action": "fill",
+      "label": "Full name",
+      "text": "Rowan Ten"
+    },
+    {
+      "action": "fill",
+      "label": "Email",
+      "text": "r210-noloc@example.com"
+    },
+    {
+      "action": "fill",
+      "label": "Password",
+      "text": "r210-walk-pass-1"
+    },
+    {
+      "action": "click",
+      "role": "checkbox",
+      "name": "I agree to the"
+    },
+    {
+      "action": "click",
+      "role": "button",
+      "name": "Create account",
+      "critical": true
+    },
+    {
+      "action": "wait",
+      "text": "We're reviewing your account",
+      "timeout": 25000,
+      "critical": true
+    },
+    {
+      "action": "click",
+      "role": "button",
+      "name": "Browse feed",
+      "expectText": "Vintage steel road bike",
+      "shot": "02-unscoped-feed-everything-passes",
+      "timeout": 20000
+    },
+    {
+      "action": "evalExpect",
+      "name": "honest-derivation-null-for-loopback",
+      "expr": "(() => { const x = new XMLHttpRequest(); x.open('GET', '/api/location-context', false); x.send(); return 'status=' + x.status + ' body=' + x.responseText.substring(0, 80) })()",
+      "contains": "status=200 body={\\\"coarseRegion\\\":null"
+    },
+    {
+      "action": "click",
+      "role": "button",
+      "name": "Advanced filters",
+      "timeout": 15000
+    },
+    {
+      "action": "wait",
+      "text": "We don't know roughly where you are yet",
+      "timeout": 10000
+    },
+    {
+      "action": "shot",
+      "label": "03-ask-row-rendered",
+      "expectText": "Use my device location"
+    },
+    {
+      "action": "click",
+      "role": "button",
+      "name": "Use my device location",
+      "critical": true
+    },
+    {
+      "action": "wait",
+      "text": "Location not shared",
+      "timeout": 12000
+    },
+    {
+      "action": "wait",
+      "text": "You can try again any time, or add a city and state to your profile.",
+      "timeout": 6000
+    },
+    {
+      "action": "shot",
+      "label": "04-honest-denial-toast",
+      "expectText": "Location not shared"
+    },
+    {
+      "action": "evalExpect",
+      "name": "no-grant-persisted",
+      "expr": "(() => { const raw = localStorage.getItem('ft_location_context'); if (!raw) return 'grantPersisted=false blob=absent'; const p = JSON.parse(raw); return 'grantPersisted=' + (p.precise ? 'TRUE' : 'false') + ' blob=present coarse=' + p.coarseRegion })()",
+      "contains": "grantPersisted=false"
+    },
+    {
+      "action": "evalExpect",
+      "name": "ask-row-still-offered-retry",
+      "expr": "(() => { const row = document.querySelector('[data-testid=feed-location-ask]'); return 'askRow=' + (row ? 'still-offered' : 'gone') })()",
+      "contains": "askRow=still-offered"
+    }
+  ]
+}

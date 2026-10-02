@@ -1,0 +1,16 @@
+{
+  "name": "self-test-duplicate-guard",
+  "description": "Harness SELF-TEST (run in any project): takes two screenshots of the SAME static page with different labels. EXPECTED OUTCOME: the run FAILS (exit 1) at step 2 with the 'DUPLICATE SCREENSHOT' M24-hash-guard message — that failure IS the pass criterion. If this scenario ever PASSES, the duplicate guard is broken.",
+  "base": "http://localhost:3000",
+  "steps": [
+    {
+      "action": "nav",
+      "url": "/",
+      "shot": "01-first-capture"
+    },
+    {
+      "action": "shot",
+      "label": "02-same-page-different-label"
+    }
+  ]
+}

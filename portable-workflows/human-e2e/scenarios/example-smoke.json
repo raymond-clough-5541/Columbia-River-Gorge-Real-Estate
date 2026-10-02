@@ -1,0 +1,23 @@
+{
+  "name": "example-smoke",
+  "description": "Generic smoke scenario TEMPLATE — portable to any project. Point base at your app, replace the CHANGE_ME strings with your app's own always-present text, add your flows. Steps speak accessible roles/labels (no CSS selectors), so they survive restyling.",
+  "base": "http://localhost:3000",
+  "steps": [
+    { "action": "clear" },
+    {
+      "action": "nav",
+      "url": "/",
+      "expectText": "CHANGE_ME: text your landing page always shows",
+      "shot": "01-landing"
+    },
+    {
+      "action": "expect",
+      "titleIncludes": "CHANGE_ME: your app name"
+    },
+    {
+      "action": "shot",
+      "label": "02-final-state",
+      "expectUrl": "/"
+    }
+  ]
+}

@@ -1,0 +1,121 @@
+{
+  "name": "ft-authz-negative-admin-mod",
+  "description": "R210 P2 (security plan section 2 / section 5): a signed-in SITE MOD hits each of the 15 admin doors. Sam Rivera (u_mod, site_mod, the real scrypt door) signs in, then probes every /api/admin/* route in-page with credentials. A moderator is NOT an admin: every door must refuse with 403 (the plan's own assert column: 'mod gets 403').",
+  "base": "http://localhost:3000",
+  "viewport": "1280x900",
+  "settleMs": 2500,
+  "navRetries": 2,
+  "steps": [
+    { "action": "clear" },
+    {
+      "action": "nav",
+      "url": "/?surface=welcome",
+      "expectText": "Sign In",
+      "shot": "01-mod-fresh-welcome",
+      "timeout": 30000
+    },
+    { "action": "click", "role": "tab", "name": "Sign In" },
+    { "action": "fill", "label": "Email", "text": "sam@freetrader.app" },
+    { "action": "fill", "label": "Password", "text": "testpass123" },
+    { "action": "press", "key": "Enter" },
+    { "action": "wait", "text": "Vintage steel road bike", "timeout": 20000, "critical": true },
+    { "action": "expect", "urlContains": "surface=app" },
+    { "action": "shot", "label": "02-mod-signed-in", "expectText": "Free Trader" },
+    {
+      "action": "evalExpect",
+      "name": "admin-door-1-audit-log-403",
+      "expr": "(() => { const x = new XMLHttpRequest(); x.open('GET', '/api/admin/audit-log', false); x.send(); return 'status=' + x.status + ' body=' + x.responseText.substring(0, 120) })()",
+      "contains": "status=403 body={\\\"error\\\":\\\"Forbidden"
+    },
+    {
+      "action": "evalExpect",
+      "name": "admin-door-2-ban-ip-403-with-csrf",
+      "expr": "(() => { const c = new XMLHttpRequest(); c.open('GET', '/api/auth/csrf', false); c.send(); const t = (JSON.parse(c.responseText) || {}).csrfToken || ''; const x = new XMLHttpRequest(); x.open('POST', '/api/admin/ban-ip', false); x.setRequestHeader('Content-Type', 'application/json'); x.setRequestHeader('X-CSRF-Token', t); x.send(JSON.stringify({ ip: '203.0.113.50', reason: 'r210 negative walk' })); return 'csrf=' + (t ? 'ok' : 'none') + ' status=' + x.status + ' body=' + x.responseText.substring(0, 120) })()",
+      "contains": "csrf=ok status=403"
+    },
+    {
+      "action": "evalExpect",
+      "name": "admin-door-3-data-403",
+      "expr": "(() => { const x = new XMLHttpRequest(); x.open('GET', '/api/admin/data', false); x.send(); return 'status=' + x.status + ' body=' + x.responseText.substring(0, 120) })()",
+      "contains": "status=403"
+    },
+    {
+      "action": "evalExpect",
+      "name": "admin-door-4-escalations-403",
+      "expr": "(() => { const x = new XMLHttpRequest(); x.open('GET', '/api/admin/escalations', false); x.send(); return 'status=' + x.status + ' body=' + x.responseText.substring(0, 120) })()",
+      "contains": "status=403"
+    },
+    {
+      "action": "evalExpect",
+      "name": "admin-door-5-group-permissions-403-with-csrf",
+      "expr": "(() => { const c = new XMLHttpRequest(); c.open('GET', '/api/auth/csrf', false); c.send(); const t = (JSON.parse(c.responseText) || {}).csrfToken || ''; const x = new XMLHttpRequest(); x.open('POST', '/api/admin/group-permissions', false); x.setRequestHeader('Content-Type', 'application/json'); x.setRequestHeader('X-CSRF-Token', t); x.send(JSON.stringify({ groupId: 'g_austin', permission: 'can_post_listings', value: true })); return 'csrf=' + (t ? 'ok' : 'none') + ' status=' + x.status + ' body=' + x.responseText.substring(0, 120) })()",
+      "contains": "csrf=ok status=403"
+    },
+    {
+      "action": "evalExpect",
+      "name": "admin-door-6-groups-suspend-403-with-csrf",
+      "expr": "(() => { const c = new XMLHttpRequest(); c.open('GET', '/api/auth/csrf', false); c.send(); const t = (JSON.parse(c.responseText) || {}).csrfToken || ''; const x = new XMLHttpRequest(); x.open('POST', '/api/admin/groups/g_austin/suspend', false); x.setRequestHeader('Content-Type', 'application/json'); x.setRequestHeader('X-CSRF-Token', t); x.send(JSON.stringify({ suspend: true, reason: 'r210 negative walk' })); return 'csrf=' + (t ? 'ok' : 'none') + ' status=' + x.status + ' body=' + x.responseText.substring(0, 120) })()",
+      "contains": "csrf=ok status=403"
+    },
+    {
+      "action": "evalExpect",
+      "name": "admin-door-7-invite-inventory-403",
+      "expr": "(() => { const x = new XMLHttpRequest(); x.open('GET', '/api/admin/invite-inventory', false); x.send(); return 'status=' + x.status + ' body=' + x.responseText.substring(0, 120) })()",
+      "contains": "status=403"
+    },
+    {
+      "action": "evalExpect",
+      "name": "admin-door-8-user-ip-history-403",
+      "expr": "(() => { const x = new XMLHttpRequest(); x.open('GET', '/api/admin/user-ip-history?userId=u_me', false); x.send(); return 'status=' + x.status + ' body=' + x.responseText.substring(0, 120) })()",
+      "contains": "status=403"
+    },
+    {
+      "action": "evalExpect",
+      "name": "admin-door-9-user-ip-view-403-with-csrf",
+      "expr": "(() => { const c = new XMLHttpRequest(); c.open('GET', '/api/auth/csrf', false); c.send(); const t = (JSON.parse(c.responseText) || {}).csrfToken || ''; const x = new XMLHttpRequest(); x.open('POST', '/api/admin/user-ip-view', false); x.setRequestHeader('Content-Type', 'application/json'); x.setRequestHeader('X-CSRF-Token', t); x.send(JSON.stringify({ userId: 'u_me' })); return 'csrf=' + (t ? 'ok' : 'none') + ' status=' + x.status + ' body=' + x.responseText.substring(0, 120) })()",
+      "contains": "csrf=ok status=403"
+    },
+    {
+      "action": "evalExpect",
+      "name": "admin-door-10-users-ban-403-with-csrf",
+      "expr": "(() => { const c = new XMLHttpRequest(); c.open('GET', '/api/auth/csrf', false); c.send(); const t = (JSON.parse(c.responseText) || {}).csrfToken || ''; const x = new XMLHttpRequest(); x.open('POST', '/api/admin/users/u_seller1/ban', false); x.setRequestHeader('Content-Type', 'application/json'); x.setRequestHeader('X-CSRF-Token', t); x.send(JSON.stringify({ reason: 'r210 negative walk' })); return 'csrf=' + (t ? 'ok' : 'none') + ' status=' + x.status + ' body=' + x.responseText.substring(0, 120) })()",
+      "contains": "csrf=ok status=403"
+    },
+    {
+      "action": "evalExpect",
+      "name": "admin-door-11-users-role-403-with-csrf",
+      "expr": "(() => { const c = new XMLHttpRequest(); c.open('GET', '/api/auth/csrf', false); c.send(); const t = (JSON.parse(c.responseText) || {}).csrfToken || ''; const x = new XMLHttpRequest(); x.open('POST', '/api/admin/users/u_seller1/role', false); x.setRequestHeader('Content-Type', 'application/json'); x.setRequestHeader('X-CSRF-Token', t); x.send(JSON.stringify({ role: 'site_mod', granted: true, reason: 'r210 negative walk' })); return 'csrf=' + (t ? 'ok' : 'none') + ' status=' + x.status + ' body=' + x.responseText.substring(0, 120) })()",
+      "contains": "csrf=ok status=403"
+    },
+    {
+      "action": "evalExpect",
+      "name": "admin-door-12-users-unban-403-with-csrf",
+      "expr": "(() => { const c = new XMLHttpRequest(); c.open('GET', '/api/auth/csrf', false); c.send(); const t = (JSON.parse(c.responseText) || {}).csrfToken || ''; const x = new XMLHttpRequest(); x.open('POST', '/api/admin/users/u_seller1/unban', false); x.setRequestHeader('Content-Type', 'application/json'); x.setRequestHeader('X-CSRF-Token', t); x.send(JSON.stringify({ reason: 'r210 negative walk' })); return 'csrf=' + (t ? 'ok' : 'none') + ' status=' + x.status + ' body=' + x.responseText.substring(0, 120) })()",
+      "contains": "csrf=ok status=403"
+    },
+    {
+      "action": "evalExpect",
+      "name": "admin-door-13-users-verify-403-with-csrf",
+      "expr": "(() => { const c = new XMLHttpRequest(); c.open('GET', '/api/auth/csrf', false); c.send(); const t = (JSON.parse(c.responseText) || {}).csrfToken || ''; const x = new XMLHttpRequest(); x.open('POST', '/api/admin/users/u_seller1/verify', false); x.setRequestHeader('Content-Type', 'application/json'); x.setRequestHeader('X-CSRF-Token', t); x.send(JSON.stringify({ grant: true })); return 'csrf=' + (t ? 'ok' : 'none') + ' status=' + x.status + ' body=' + x.responseText.substring(0, 120) })()",
+      "contains": "csrf=ok status=403"
+    },
+    {
+      "action": "evalExpect",
+      "name": "admin-door-14-users-bulk-action-403-with-csrf",
+      "expr": "(() => { const c = new XMLHttpRequest(); c.open('GET', '/api/auth/csrf', false); c.send(); const t = (JSON.parse(c.responseText) || {}).csrfToken || ''; const x = new XMLHttpRequest(); x.open('POST', '/api/admin/users/bulk-action', false); x.setRequestHeader('Content-Type', 'application/json'); x.setRequestHeader('X-CSRF-Token', t); x.send(JSON.stringify({ userIds: ['u_seller1'], action: 'approve' })); return 'csrf=' + (t ? 'ok' : 'none') + ' status=' + x.status + ' body=' + x.responseText.substring(0, 120) })()",
+      "contains": "csrf=ok status=403"
+    },
+    {
+      "action": "evalExpect",
+      "name": "admin-door-15-users-export-403",
+      "expr": "(() => { const x = new XMLHttpRequest(); x.open('GET', '/api/admin/users/export?status=all&role=all', false); x.send(); return 'status=' + x.status + ' body=' + x.responseText.substring(0, 120) })()",
+      "contains": "status=403"
+    },
+    {
+      "action": "evalExpect",
+      "name": "mod-still-signed-in-after-refusals",
+      "expr": "(() => 'session=' + (localStorage.getItem('ft_session') || 'none'))()",
+      "contains": "session=u_mod"
+    }
+  ]
+}

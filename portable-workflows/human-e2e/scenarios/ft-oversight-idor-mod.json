@@ -1,0 +1,41 @@
+{
+  "name": "ft-oversight-idor-mod",
+  "description": "R210 P2 (security plan section 2 / section 5): the oversight IDOR probe, staff leg. Sam Rivera (site_mod, the real scrypt door) reads the SAME conversation the member leg was refused on: the oversight LIST answers 200 with the Jordan-to-Maria thread, and the thread read answers 200 with the real opening message (the staff read the participant cannot get through the staff door). Depends on the conversation minted by ft-oversight-idor.json (run order recorded in the results doc; the closing re-seed clears it).",
+  "base": "http://localhost:3000",
+  "viewport": "1280x900",
+  "settleMs": 2500,
+  "navRetries": 2,
+  "steps": [
+    { "action": "clear" },
+    {
+      "action": "nav",
+      "url": "/?surface=welcome",
+      "expectText": "Sign In",
+      "timeout": 30000
+    },
+    { "action": "click", "role": "tab", "name": "Sign In" },
+    { "action": "fill", "label": "Email", "text": "sam@freetrader.app" },
+    { "action": "fill", "label": "Password", "text": "testpass123" },
+    { "action": "press", "key": "Enter" },
+    { "action": "wait", "text": "Vintage steel road bike", "timeout": 20000, "critical": true },
+    { "action": "expect", "urlContains": "surface=app" },
+    {
+      "action": "evalExpect",
+      "name": "oversight-list-200-with-the-real-thread",
+      "expr": "(() => { const x = new XMLHttpRequest(); x.open('GET', '/api/moderation/oversight', false); x.send(); const list = (JSON.parse(x.responseText) || {}).conversations || []; const hit = list.find((c) => ((c.participantIds || []).includes('u_me')) && ((c.participantIds || []).includes('u_seller1'))) || null; return 'status=' + x.status + ' count=' + list.length + ' jordanMariaThread=' + (hit ? hit.id : 'none') })()",
+      "contains": "status=200 count=1 jordanMariaThread="
+    },
+    {
+      "action": "evalExpect",
+      "name": "oversight-thread-200-real-message",
+      "expr": "(() => { const a = new XMLHttpRequest(); a.open('GET', '/api/moderation/oversight', false); a.send(); const list = (JSON.parse(a.responseText) || {}).conversations || []; const hit = list.find((c) => ((c.participantIds || []).includes('u_me')) && ((c.participantIds || []).includes('u_seller1'))) || null; const id = hit ? hit.id : 'none'; const x = new XMLHttpRequest(); x.open('GET', '/api/moderation/oversight?conversationId=' + encodeURIComponent(id), false); x.send(); const body = x.responseText; return 'convId=' + id + ' status=' + x.status + ' opener=' + (body.includes('still available') ? 'present' : 'absent') + ' names=' + (body.includes('Jordan') ? 'jordan' : '-') })()",
+      "contains": "status=200 opener=present"
+    },
+    {
+      "action": "evalExpect",
+      "name": "oversight-unknown-conversation-404",
+      "expr": "(() => { const x = new XMLHttpRequest(); x.open('GET', '/api/moderation/oversight?conversationId=does-not-exist-r210', false); x.send(); return 'status=' + x.status + ' body=' + x.responseText.substring(0, 120) })()",
+      "contains": "status=404"
+    }
+  ]
+}
