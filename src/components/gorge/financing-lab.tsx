@@ -10,12 +10,13 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { Calculator, ChevronDown, Info, Landmark, PiggyBank, Scale, SunSnow, Warehouse } from "lucide-react";
+import { Calculator, ChevronDown, Coins, Info, Landmark, PiggyBank, Scale, SunSnow, Warehouse } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
 import {
   INSURANCE_RATE,
   PROPERTY_TAX_RATES,
+  REAL_TERMS_INFLATION,
   RENTAL_RESERVE_RATE,
   estimateMarketRent,
   SEASONAL_RENT_BANDS,
@@ -24,6 +25,7 @@ import {
   fmtPct,
   futureValue,
   monthlyPayment,
+  realValue,
   remainingBalance,
   totalInterest,
   type PropertyListing,
@@ -58,6 +60,15 @@ export function FinancingLab({ listing }: { listing: PropertyListing }) {
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [posture, setPosture] = useState<RentPosture>("base");
   const [seasonality, setSeasonality] = useState<RentSeasonality>("annualized");
+  // Round 13 — real-terms lens (2026$): deflates the equity-runway family
+  // (2046 value, equity, multiple, schedule value column) at the shared
+  // fixed deflator. The note balance stays contractual/nominal — equity is
+  // real value minus nominal debt, the honest framing.
+  const [realTerms, setRealTerms] = useState(false);
+
+  /** Display-layer deflator — nominal stays canonical underneath. */
+  const dv = (nominal: number, years: number) =>
+    realTerms ? realValue(nominal, REAL_TERMS_INFLATION, years) : nominal;
 
   const state = listing.submarket?.state ?? "OR";
   const baseRent = useMemo(
@@ -154,6 +165,17 @@ export function FinancingLab({ listing }: { listing: PropertyListing }) {
       },
     };
   }, [listing, listing.price, listing.submarket?.projectedCagr, downPct, rate, term, state, isLand, baseRent, postureMult]);
+
+  // Real-terms display family (round 13): value path deflated, balance
+  // contractual. The multiple swaps to the real equity over the same
+  // down stroke — purchasing-power honesty, same downside asymmetry.
+  const realValue2046 = dv(calc.value2046, 20);
+  const realEquity2046 = realValue2046 - calc.balance2046;
+  const realMultiple =
+    calc.down > 0 && realEquity2046 > 0 ? realEquity2046 / calc.down : 0;
+  const displayValue2046 = realTerms ? realValue2046 : calc.value2046;
+  const displayEquity2046 = realTerms ? realEquity2046 : calc.equity2046;
+  const displayMultiple = realTerms ? realMultiple : calc.leverageMultiple;
 
   const activeSeason = SEASONAL_RENT_BANDS[seasonality];
 
@@ -459,24 +481,60 @@ export function FinancingLab({ listing }: { listing: PropertyListing }) {
 
       {/* 2046 equity runway */}
       <div className="mt-3 rounded-lg border border-emerald-500/25 bg-emerald-500/[0.05] p-3.5">
-        <div className="flex items-center gap-2">
-          <PiggyBank className="h-4 w-4 text-emerald-600 dark:text-emerald-400" aria-hidden />
-          <MicroLabel className="text-emerald-700 dark:text-emerald-300">
-            20-Year Equity Runway · {listing.submarket?.name ?? "corridor"} CAGR {fmtPct(calc.cagr)}
-          </MicroLabel>
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+          <div className="flex items-center gap-2">
+            <PiggyBank className="h-4 w-4 text-emerald-600 dark:text-emerald-400" aria-hidden />
+            <MicroLabel className="text-emerald-700 dark:text-emerald-300">
+              20-Year Equity Runway · {listing.submarket?.name ?? "corridor"} CAGR {fmtPct(calc.cagr)}
+            </MicroLabel>
+          </div>
+          {/* Round 13 — real-terms lens. One knob, fixed 2.5% deflator (the
+              Projections workspace owns the adjustable slider); violet to
+              match the lens language established there. Value path deflates;
+              the note balance stays contractual. */}
+          <button
+            type="button"
+            onClick={() => setRealTerms((v) => !v)}
+            aria-pressed={realTerms}
+            title={
+              "Deflate the 2046 value path and equity into 2026 dollars at a 2.5%/yr inflation assumption. The loan balance stays contractual (nominal dollars) — equity is real value minus nominal debt."
+            }
+            className={cn(
+              "inline-flex h-7 shrink-0 items-center gap-1 rounded-md border px-2 text-[11px] font-semibold transition-all active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/70",
+              realTerms
+                ? "border-violet-500/60 bg-violet-500/10 text-violet-700 dark:text-violet-300"
+                : "text-muted-foreground hover:border-zinc-300 hover:text-foreground dark:hover:border-zinc-600"
+            )}
+          >
+            <Coins className="h-3.5 w-3.5" aria-hidden />
+            2026$
+          </button>
         </div>
         <div className="mt-2.5 grid grid-cols-3 gap-2 text-center">
           <div>
             <p className="text-[10.5px] uppercase tracking-wide text-muted-foreground">
               Value 2046
+              {realTerms ? (
+                <span className="ml-1 rounded-sm border border-violet-500/40 bg-violet-500/10 px-1 py-px text-[9px] font-bold text-violet-700 dark:text-violet-300">
+                  2026$
+                </span>
+              ) : null}
             </p>
             <p className="mt-0.5 text-[13.5px] font-semibold tabular-nums">
-              {fmtCurrency(calc.value2046, { compact: true })}
+              {fmtCurrency(displayValue2046, { compact: true })}
             </p>
           </div>
           <div>
             <p className="text-[10.5px] uppercase tracking-wide text-muted-foreground">
               Loan balance
+              {realTerms ? (
+                <span
+                  className="ml-1 text-[9px] font-medium text-muted-foreground/80"
+                  title="Contractual note — repaid in nominal dollars, never deflated"
+                >
+                  nominal
+                </span>
+              ) : null}
             </p>
             <p className="mt-0.5 text-[13.5px] font-semibold tabular-nums text-muted-foreground">
               −{fmtCurrency(calc.balance2046, { compact: true })}
@@ -485,20 +543,36 @@ export function FinancingLab({ listing }: { listing: PropertyListing }) {
           <div>
             <p className="text-[10.5px] uppercase tracking-wide text-muted-foreground">
               Equity
+              {realTerms ? (
+                <span className="ml-1 rounded-sm border border-violet-500/40 bg-violet-500/10 px-1 py-px text-[9px] font-bold text-violet-700 dark:text-violet-300">
+                  2026$
+                </span>
+              ) : null}
             </p>
             <p className="mt-0.5 text-[13.5px] font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
-              {fmtCurrency(calc.equity2046, { compact: true })}
+              {fmtCurrency(displayEquity2046, { compact: true })}
             </p>
           </div>
         </div>
-        {calc.leverageMultiple > 0 ? (
+        {displayMultiple > 0 ? (
           <p className="mt-2.5 border-t border-emerald-500/20 pt-2.5 text-[12px] leading-relaxed text-muted-foreground">
             On a {fmtCurrency(calc.down, { compact: true })} down stroke, that is a{" "}
             <span className="font-semibold text-emerald-600 dark:text-emerald-400">
-              {calc.leverageMultiple.toFixed(1)}× return of equity
-            </span>{" "}
+              {displayMultiple.toFixed(1)}× return of equity
+            </span>
+            {realTerms ? " in 2026 purchasing power" : ""}{" "}
             — appreciation accrues to the levered position while the note
             amortizes.
+          </p>
+        ) : null}
+        {realTerms ? (
+          <p className="mt-2 flex items-start gap-1.5 rounded-md border border-violet-500/25 bg-violet-500/[0.06] p-2 text-[10.5px] leading-relaxed text-violet-700 dark:text-violet-300">
+            <Coins className="mt-0.5 h-3 w-3 shrink-0" aria-hidden />
+            Real-terms lens: the value path is deflated at{" "}
+            {fmtPct(REAL_TERMS_INFLATION)}/yr — the note balance stays
+            contractual (nominal dollars), so equity is real value minus
+            nominal debt. The Projections workspace owns the adjustable
+            deflator slider.
           </p>
         ) : null}
       </div>
@@ -535,7 +609,9 @@ export function FinancingLab({ listing }: { listing: PropertyListing }) {
 
         {scheduleOpen ? (
           <div className="border-t px-3.5 pb-4 pt-3.5">
-            {/* Crossover chart: appreciating value vs amortizing balance */}
+            {/* Crossover chart: appreciating value vs amortizing balance.
+                With the 2026$ lens on, the value line is deflated — the
+                wedge narrows to its purchasing-power truth. */}
             <div className="h-[170px] w-full">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart
@@ -570,9 +646,11 @@ export function FinancingLab({ listing }: { listing: PropertyListing }) {
                     cursor={{ stroke: "var(--border)", strokeDasharray: "4 4" }}
                     formatter={(value: number, name: string) => [
                       fmtCurrency(value),
-                      name === "value"
-                        ? "Market value"
-                        : "Loan balance",
+                      name.startsWith("value")
+                        ? realTerms
+                          ? "Market value (2026$)"
+                          : "Market value"
+                        : "Loan balance (nominal)",
                     ]}
                     labelFormatter={(y) => `${y}`}
                     contentStyle={{
@@ -597,11 +675,13 @@ export function FinancingLab({ listing }: { listing: PropertyListing }) {
                   />
                   <Line
                     type="monotone"
-                    dataKey={(d: { value: number }) => Math.round(d.value)}
-                    stroke="#10b981"
+                    dataKey={(d: { value: number; year: number }) =>
+                      Math.round(dv(d.value, d.year - 2026))
+                    }
+                    stroke={realTerms ? "#8b5cf6" : "#10b981"}
                     strokeWidth={2.25}
                     dot={false}
-                    name="value"
+                    name={realTerms ? "value-real" : "value"}
                     isAnimationActive={false}
                   />
                 </LineChart>
@@ -609,8 +689,12 @@ export function FinancingLab({ listing }: { listing: PropertyListing }) {
             </div>
             <p className="mt-1.5 flex flex-wrap items-center gap-x-3.5 gap-y-1 text-[10.5px] text-muted-foreground">
               <span className="inline-flex items-center gap-1.5">
-                <span className="h-0.5 w-4 rounded bg-emerald-500" aria-hidden />
+                <span
+                  className={cn("h-0.5 w-4 rounded", realTerms ? "bg-violet-500" : "bg-emerald-500")}
+                  aria-hidden
+                />
                 Value at {fmtPct(calc.cagr)} market CAGR
+                {realTerms ? " · deflated to 2026$" : ""}
               </span>
               <span className="inline-flex items-center gap-1.5">
                 <span
@@ -621,15 +705,15 @@ export function FinancingLab({ listing }: { listing: PropertyListing }) {
                   }}
                   aria-hidden
                 />
-                Amortizing balance
+                Amortizing balance (nominal)
               </span>
               <span className="ml-auto italic">
                 the widening wedge is the equity build
               </span>
             </p>
 
-            {/* Yearly table */}
-            <div className="thin-scroll mt-3 max-h-64 overflow-y-auto rounded-md border">
+            {/* Yearly table — the 2026$ lens adds the deflated value column */}
+            <div className="thin-scroll mt-3 max-h-64 overflow-auto rounded-md border">
               <table className="w-full text-[12px]">
                 <thead className="sticky top-0 z-10 bg-muted/95 backdrop-blur-sm">
                   <tr className="text-[10.5px] uppercase tracking-wider text-muted-foreground">
@@ -643,6 +727,11 @@ export function FinancingLab({ listing }: { listing: PropertyListing }) {
                     <th className="px-2.5 py-2 text-right font-semibold">
                       Cum. interest
                     </th>
+                    {realTerms ? (
+                      <th className="px-2.5 py-2 text-right font-semibold text-violet-700 dark:text-violet-300">
+                        Value (2026$)
+                      </th>
+                    ) : null}
                     <th className="px-2.5 py-2 text-right font-semibold">
                       Balance
                     </th>
@@ -674,6 +763,11 @@ export function FinancingLab({ listing }: { listing: PropertyListing }) {
                       <td className="px-2.5 py-1.5 text-right text-muted-foreground">
                         {fmtCurrency(Math.round(row.cumInterest))}
                       </td>
+                      {realTerms ? (
+                        <td className="px-2.5 py-1.5 text-right font-medium text-violet-700 dark:text-violet-300">
+                          {fmtCurrency(Math.round(dv(row.value, row.year - 2026)))}
+                        </td>
+                      ) : null}
                       <td className="px-2.5 py-1.5 text-right font-medium">
                         {row.balance > 0
                           ? fmtCurrency(Math.round(row.balance))

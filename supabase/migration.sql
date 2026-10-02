@@ -8,8 +8,35 @@
 create extension if not exists "pgcrypto";
 
 -- ---------------------------------------------------------------------
+-- Table: regions
+-- Expansion registry (EXPANSION-PLAN.md §2) — one row per market region.
+-- The corridor is the live region; PNW/USA/Canada waves ship as
+-- scaffold/planned/research rows so market expansion is a data problem.
+-- ---------------------------------------------------------------------
+create table if not exists public.regions (
+  id                 uuid primary key default gen_random_uuid(),
+  slug               text not null unique,
+  name               text not null,
+  country            text not null check (country in ('USA','Canada')),
+  states_provinces   text not null,
+  wave               text not null check (wave in ('core','pnw','usa','canada')),
+  status             text not null check (status in ('live','scaffold','planned','research')),
+  scarcity_hook      text not null,
+  regulatory_context text not null,
+  tax_arbitrage_note text not null,
+  target_submarkets  integer not null check (target_submarkets > 0),
+  launch_order       integer not unique,
+  launched_at        timestamptz,
+  created_at         timestamptz not null default now()
+);
+
+create index if not exists regions_wave_idx on public.regions (wave);
+create index if not exists regions_status_idx on public.regions (status);
+
+-- ---------------------------------------------------------------------
 -- Table: submarkets
--- One row per micro-market jurisdiction inside the CRGNSA corridor.
+-- One row per micro-market jurisdiction inside a region (first region:
+-- the CRGNSA corridor).
 -- ---------------------------------------------------------------------
 create table if not exists public.submarkets (
   id                    uuid primary key default gen_random_uuid(),
@@ -38,11 +65,13 @@ create table if not exists public.submarkets (
   depletion_year        integer not null,
   map_x                 numeric not null default 50,
   map_y                 numeric not null default 50,
+  region_id             uuid references public.regions (id),
   created_at            timestamptz not null default now()
 );
 
 create index if not exists submarkets_state_idx on public.submarkets (state);
 create index if not exists submarkets_jurisdiction_idx on public.submarkets (jurisdiction_type);
+create index if not exists submarkets_region_idx on public.submarkets (region_id);
 
 -- ---------------------------------------------------------------------
 -- Table: property_listings
@@ -74,8 +103,21 @@ create index if not exists property_listings_type_idx on public.property_listing
 -- Row Level Security — analytics are public-read; writes are
 -- restricted to the service role (server-side only).
 -- ---------------------------------------------------------------------
+alter table public.regions enable row level security;
 alter table public.submarkets enable row level security;
 alter table public.property_listings enable row level security;
+
+drop policy if exists "Public read access on regions" on public.regions;
+create policy "Public read access on regions"
+  on public.regions for select
+  to anon, authenticated
+  using (true);
+
+drop policy if exists "Service write access on regions" on public.regions;
+create policy "Service write access on regions"
+  on public.regions for all
+  to service_role
+  using (true) with check (true);
 
 drop policy if exists "Public read access on submarkets" on public.submarkets;
 create policy "Public read access on submarkets"
@@ -106,6 +148,102 @@ create policy "Service write access on property_listings"
 -- ---------------------------------------------------------------------
 truncate public.property_listings cascade;
 truncate public.submarkets cascade;
+truncate public.regions cascade;
+
+insert into public.regions (
+  slug, name, country, states_provinces, wave, status, scarcity_hook,
+  regulatory_context, tax_arbitrage_note, target_submarkets, launch_order, launched_at
+) values
+  ('columbia-river-gorge', 'Columbia River Gorge National Scenic Area', 'USA', 'OR + WA', 'core', 'live',
+   '1986 CRGNSA Act + SMA/GMA overlays + Goal 14 UGBs — six statutory layers stacked on 292,600 protected acres.',
+   'The proving ground. The Columbia River Gorge National Scenic Area Act of 1986 created the country''s first national-scenic-area land-use regime: a federally-appointed Commission reviewing development across 292,600 acres, layered over Oregon''s Goal 14 urban growth boundaries on the south bank and Washington''s Growth Management Act urban growth areas on the north bank.',
+   'Oregon''s progressive income tax (to 9.9%) vs Washington''s zero personal income tax — cross-river commuting pairs quantify the spread.',
+   11, 0, '2026-01-15T00:00:00Z'),
+  ('puget-sound', 'Puget Sound I-5 Corridor', 'USA', 'WA', 'pnw', 'scaffold',
+   'The original UGB scarcity market: Snohomish–King–Pierce urban growth areas pressed against the GMA''s firmest lines.',
+   'The Growth Management Act''s flagship theater — king-county UGAs, forestland-of-statewide-significance buffers, and shoreline designations squeezing the I-5 corridor''s buildable envelopes.',
+   'WA 0% income tax vs OR 9.9% — the mirror image of the Gorge story for Seattle-wage earners choosing residency.',
+   14, 1, null),
+  ('willamette-valley', 'Willamette Valley', 'USA', 'OR', 'pnw', 'scaffold',
+   'Oregon Goal 14 at metro scale — Portland UGB reserves, Salem, Corvallis, Eugene inside the nation''s oldest statewide growth boundary system.',
+   'The Gorge''s big sibling. Senate Bill 100 (1973) gave every Oregon city an urban growth boundary and rural lands exclusive-farm-use zoning.',
+   'OR zero sales tax ↔ WA zero income tax — the two-state shuffle, quantified per commuting pair.',
+   12, 2, null),
+  ('vancouver-portland', 'Vancouver ↔ Portland Border', 'USA', 'WA + OR', 'pnw', 'scaffold',
+   'The border arbitrage classic: Vancouver''s UGA absorbing demand that Portland''s UGB wall deflects north.',
+   'Two growth-boundary systems meet at the Columbia''s widest bridge gap — the cleanest natural experiment in North America for how boundary asymmetry prices land.',
+   'Live in WA (0% income tax), shop in OR (0% sales tax) — the classic quantified.',
+   9, 3, null),
+  ('bend-redmond', 'Bend / Redmond', 'USA', 'OR', 'pnw', 'scaffold',
+   'UGB + state land + water rights — Central Oregon''s tri-layer scarcity at the Cascades'' foot.',
+   'Bend''s Goal 14 boundary against publicly-owned state and federal land, with groundwater mitigation requirements in the Deschutes basin adding a hydraulic constraint on top of the legal one.',
+   'CA equity exodus economics — the arbitrage is against California''s top bracket, not a neighboring state.',
+   10, 4, null),
+  ('hood-canal-kitsap', 'Hood Canal / Kitsap', 'USA', 'WA', 'pnw', 'scaffold',
+   'GMA UGA squeeze + the Shoreline Management Act along the canal''s shellfish-sensitive shorelines.',
+   'Kitsap County''s UGAs are hemmed by Puget Sound on three sides; shoreline designations, salmon-critical-areas ordinances, and naval reservation buffers make the buildable band measurably thin.',
+   'Kitsap residency against Seattle wages — WA''s 0% income tax captured at ferry-commute distance.',
+   8, 5, null),
+  ('olympic-peninsula', 'Olympic Peninsula', 'USA', 'WA', 'pnw', 'scaffold',
+   'GMA boundaries + water availability — Sequim and Port Angeles constrained by both ordinance and hydrology.',
+   'The rain-shadow side of the Olympics: retiree inflow into Clallam and Jefferson county UGAs where municipal water firm yield, not zoning, is the binding constraint in half the buildable bands.',
+   'Retiree inflow vs CA/OR pension taxation — WA taxes neither pensions nor income.',
+   8, 6, null),
+  ('spokane-cda', 'Spokane ↔ Coeur d''Alene', 'USA', 'WA + ID', 'pnw', 'scaffold',
+   'GMA UGA on the Washington side vs Idaho county planning across the state line — boundary asymmetry at the Inland Empire scale.',
+   'The new corridor pair: Spokane''s growth-management urban growth areas press against Post Falls and Coeur d''Alene''s looser county-review regimes.',
+   'WA 0% income ↔ ID flat-rate income — the newest quantifiable border spread.',
+   9, 7, null),
+  ('boulder-county', 'Boulder County, CO', 'USA', 'CO', 'usa', 'planned',
+   'The hardest urban growth boundary in the US — a 75,000-acre service-area cap ringed by a sales-tax-funded open-space belt.',
+   'Boulder''s 1970s-era growth cap plus decades of open-space acquisition created the most acute boundary premium in the country.',
+   'CO flat income tax — no border spread; the scarcity premium itself is the story.',
+   10, 8, null),
+  ('tahoe-basin', 'Lake Tahoe Basin', 'USA', 'CA + NV', 'usa', 'planned',
+   'TRPA bi-state regional planning — scenic-threshold and coverage caps freeze development basin-wide.',
+   'The Tahoe Regional Planning Agency governs both states under a compact with Congress: impervious-coverage allocations, scenic-quality thresholds, and a development-rights marketplace.',
+   'NV 0% income tax vs CA top bracket — the Incline Village residency shuffle, quantified.',
+   7, 9, null),
+  ('lexington-bluegrass', 'Lexington Bluegrass, KY', 'USA', 'KY', 'usa', 'planned',
+   'Rural Service Area boundary + the nation''s oldest PDR farmland-preservation program.',
+   'Fayette County''s 1958 urban service boundary — the country''s first — plus a purchase-of-development-rights program that has permanently protected the Inner Bluegrass horse farms.',
+   'KY flat income tax — the play is land, not tax.',
+   8, 10, null),
+  ('montgomery-reserve', 'Montgomery County Ag Reserve, MD', 'USA', 'MD', 'usa', 'planned',
+   'A 93,000-acre Agricultural Reserve ring around DC, held by transferable development rights since 1980.',
+   'The nation''s most successful TDR program: downzoned farmland sells development rights into the county''s down-county density receiving areas.',
+   'MD progressive brackets + DC/VA cross-border commuting pairs.',
+   9, 11, null),
+  ('pinelands', 'New Jersey Pinelands', 'USA', 'NJ', 'usa', 'planned',
+   'A comprehensive management plan across a million-acre biosphere reserve — the East''s CRGNSA analog.',
+   'Federal legislation (1978) + an interstate compact + the Pinelands Comprehensive Management Plan govern a million acres of sandy pine barrens with strict growth-area allocation.',
+   'NJ property-tax pressure vs PA just across the Delaware — a cost-of-carry arbitrage rather than income-tax.',
+   10, 12, null),
+  ('oahu', 'O''ahu, Hawai''i', 'USA', 'HI', 'usa', 'planned',
+   'State Land Use Urban District — island land exhaustion in its purest form.',
+   'Hawai''i''s State Land Use Commission classifies every acre into four districts; the Urban district on O''ahu is finite by geography.',
+   'High-bracket state income tax — scarcity is geographic, not fiscal.',
+   6, 13, null),
+  ('metro-vancouver', 'Metro Vancouver / Fraser Valley, BC', 'Canada', 'BC', 'canada', 'research',
+   'Agricultural Land Reserve + Urban Containment Boundary — the Gorge story at metro scale, in Canadian dollars.',
+   'British Columbia''s ALR (1973) fences the Fraser Valley''s farmland while Metro Vancouver''s regional growth strategy draws a hard urban containment boundary.',
+   'CAD pricing, BC PTT transfer tax + foreign-buyer band — a different carry calculus to model.',
+   14, 14, null),
+  ('gta-greenbelt', 'GTA / Golden Horseshoe, ON', 'Canada', 'ON', 'canada', 'research',
+   'Greenbelt + Oak Ridges Moraine + Growth Plan density targets — the most litigated land collar in Canada.',
+   'Ontario''s 2005 Greenbelt Act and the Growth Plan for the Greater Golden Horseshoe bound the largest urban region in Canada.',
+   'Ontario LTT + NRST layers; CREA/MLS data licensing required before any listing feed.',
+   16, 15, null),
+  ('montreal-cptaq', 'Montréal CMA, QC', 'Canada', 'QC', 'canada', 'research',
+   'CPTAQ agricultural-zone protection — Québec''s provincial commission gates every non-farm use of zoned farmland.',
+   'The Commission de protection du territoire agricole du Québec has held the metropolitan agricultural belt since 1978. Structural additions: bilingual routing (Bill 96), metric units, CAD formatting.',
+   'Québec''s marginal-bracket stack — with Bill 96 language compliance as the gating deliverable.',
+   10, 16, null),
+  ('calgary-edmonton', 'Calgary–Edmonton Corridor, AB', 'Canada', 'AB', 'canada', 'research',
+   'No greenbelt — city-limit + land fragmentation, the control case that proves the model.',
+   'Alberta''s unbounded prairie cities grow by annexation, not boundary statute. Including a non-greenbelt region tests the platform''s core claim: that the depletion-ledger signal is produced by regulation, not geography alone.',
+   'AB property transfer fee only; no land-registry friction — the frictionless baseline.',
+   10, 17, null);
 
 insert into public.submarkets (
   id, slug, name, state, county, jurisdictionType, regulatoryFramework, totalFootprintAcres, grossVacantAcres, netBuildableAcresMin, netBuildableAcresMax, baselinePrice2026, pricePerSqftMin, pricePerSqftMax, daysOnMarketMin, daysOnMarketMax, projectedCagr, projectedPrice2046Min, projectedPrice2046Max, waterPurveyor, wastewaterSystem, primaryConstraints, summaryNarrative, depletionYear, mapX, mapY, createdAt
@@ -121,6 +259,10 @@ insert into public.submarkets (
   ('ab5f4465-69fb-48ce-b65d-8d2f550b40b9', 'the-dalles', 'The Dalles', 'OR', 'Wasco County', 'Incorporated City', 'Goal 14 UGB', 1850, 360, 175, 205, 545000, 235, 265, 30, 55, 4.6, 1260000, 1420000, 'City of The Dalles (South Fork Mill Creek watershed + auxiliary wells)', 'City of The Dalles WWTP (mid-river outfall)', 'UGB largely committed; data-center and light-industrial demand competes for residential land; WUI fire risk Class 4 on south hills.', 'The largest land bank in the corridor, anchored by data-center payrolls and port industrial employment. Residential absorption is steady rather than spectacular, but the scale of net buildable acreage gives The Dalles the longest raw-land runway east of Bonneville.', 2038, 80, 72, '2026-10-02T02:13:18.680Z'),
   ('558dfd77-1ae2-488a-a7a4-0e29c23757da', 'white-salmon', 'White Salmon', 'WA', 'Klickitat County', 'Incorporated City', 'GMA UGA / Full Planning', 520, 140, 45, 60, 635000, 320, 360, 25, 45, 5.6, 1770000, 2000000, 'City of White Salmon (Buck Creek + spring sources)', 'White Salmon / Bingen joint WWTP', 'Buildable bench nearly exhausted; steep slopes above and below town; view premiums inflate land basis; WUI fire risk Class 4.', 'The second-fastest compounder in the corridor and the only full-planning GMA city in Klickitat County. White Salmon pairs Hood River views without Oregon income tax — a structural demand magnet. Net buildable land is the binding constraint: 45–60 acres against 5.6% projected CAGR.', 2033, 34, 26, '2026-10-02T02:13:18.688Z'),
   ('2ba7c5a1-6289-48f5-8ddd-ac9618c995cb', 'wishram', 'Wishram', 'WA', 'Klickitat County', 'Unincorporated Urban Area', 'GMA UGA / Partial Planning', 310, 95, 25, 35, 305000, 150, 175, 60, 100, 4.3, 665000, 755000, 'Klickitat County PUD No. 1 (Wishram system)', 'Individual septic systems only', 'BNSF mainline adjacency; zero municipal sewer; remoteness from employment centers; WUI fire risk Class 5.', 'The corridor''s entry-price market. Wishram trades at the lowest baseline in the Gorge on the strength of river access and rail-town character; with no sewer and only 25–35 net acres, its ceiling is a lifestyle market rather than a growth market.', 2034, 92, 32, '2026-10-02T02:13:18.685Z');
+
+-- Attach every corridor micro-market to the live CRGNSA region.
+update public.submarkets
+set region_id = (select id from public.regions where slug = 'columbia-river-gorge');
 
 insert into public.property_listings (
   id, submarket_id, title, property_type, price, acreage, bedrooms, bathrooms,
@@ -144,5 +286,8 @@ insert into public.property_listings (
   ('033bcf9a-f9b5-4bc8-bc00-f6e268c29c2f', 'cf9a4253-c85a-45b5-acfd-6fea52da005e', 'UGA Ready-to-Build Bluff View Parcel', 'Land Parcel', 265000, 1.4, 0, 0, 0, 'Dallesport UGA Residential', 'Flat, cleared 1.4-acre parcel inside the Dallesport UGA with PUD water and Port sewer at the property line. Direct river view across to The Dalles. The textbook zero-income-tax arbitrage entry: build in Washington, commute four minutes to Oregon employment.', '/images/view-parcel.png', FALSE, 'New', '2026-10-02T02:13:18.696Z');
 
 -- Verify:
+-- select r.name, r.wave, r.status, count(s.id) as markets
+-- from public.regions r left join public.submarkets s on s.region_id = r.id
+-- group by r.name, r.wave, r.status order by r.launch_order;
 -- select name, state, net_buildable_acres_min, net_buildable_acres_max, projected_cagr
 -- from public.submarkets order by name;

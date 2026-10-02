@@ -12,6 +12,7 @@ const NAV_ITEMS: { label: string; route: Route; hash: string }[] = [
   { label: "Master Matrix", route: { view: "matrix" }, hash: "#/matrix" },
   { label: "Projections", route: { view: "projections" }, hash: "#/projections" },
   { label: "Listings", route: { view: "listings" }, hash: "#/listings" },
+  { label: "Regions", route: { view: "regions" }, hash: "#/regions" },
 ];
 
 const emptySubscribe = () => () => {};
@@ -87,7 +88,7 @@ export function SiteHeader({
                 key={item.hash}
                 href={item.hash}
                 className={cn(
-                  "relative rounded-lg px-3.5 py-2 text-sm font-medium transition-colors",
+                  "relative rounded-lg px-3 py-2 text-sm font-medium transition-colors",
                   active
                     ? "text-white dark:text-zinc-950"
                     : "text-muted-foreground hover:bg-accent hover:text-foreground"

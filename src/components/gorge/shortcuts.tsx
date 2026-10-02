@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useTheme } from "next-themes";
-import { Command, Moon, Search, Sun } from "lucide-react";
+import { Command, Globe2, Moon, Search, Sun } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -16,8 +16,8 @@ import type { NavigateFn } from "./gorge-app";
 /* ------------------------------------------------------------------ */
 /* Keyboard shortcuts — power-user navigation for the analytics SPA.   */
 /*                                                                     */
-/*  g then o/m/p/l  →  jump to Overview / Matrix / Projections /       */
-/*                     Listings (classic "goto" sequences)             */
+/*  g then o/m/p/l/r  →  jump to Overview / Matrix / Projections /       */
+/*                     Listings / Regions (classic "goto" sequences)     */
 /*  /               →  jump to Listings and focus the search field     */
 /*  t               →  toggle dark / light theme                       */
 /*  ?               →  open this shortcut reference                    */
@@ -32,6 +32,7 @@ const SEQUENCE_TARGETS: Record<
   m: { label: "Master Matrix", icon: Command, route: { view: "matrix" } },
   p: { label: "Projections", icon: Command, route: { view: "projections" } },
   l: { label: "Listings", icon: Command, route: { view: "listings" } },
+  r: { label: "Regions", icon: Globe2, route: { view: "regions" } },
 };
 
 /** Small keyboard-key styled chip. */
@@ -156,7 +157,7 @@ export function KeyboardShortcuts({
             transition={{ duration: 0.16 }}
             className="fixed bottom-8 left-1/2 z-50 flex items-center gap-2 rounded-full border bg-popover/95 px-4 py-2 text-[12.5px] font-medium text-popover-foreground shadow-lg backdrop-blur-sm"
             role="status"
-            aria-label="Goto sequence armed — press o, m, p, or l"
+            aria-label="Goto sequence armed — press o, m, p, r, or l"
           >
             <Kbd className="bg-zinc-900 text-white dark:bg-emerald-500 dark:text-zinc-950">
               g
@@ -209,6 +210,11 @@ export function KeyboardShortcuts({
                 keys: ["g", "l"],
                 label: "Goto · Listings Showcase",
                 hint: "Search, filter, star a personal watchlist",
+              },
+              {
+                keys: ["g", "r"],
+                label: "Goto · Expansion Registry",
+                hint: "Region waves — PNW, USA, Canada launch dossiers",
               },
             ].map((row) => (
               <div

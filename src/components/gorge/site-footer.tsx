@@ -39,6 +39,9 @@ export function SiteFooter() {
               <a href="#/listings" className="text-muted-foreground transition-colors hover:text-foreground">
                 Listings
               </a>
+              <a href="#/regions" className="text-muted-foreground transition-colors hover:text-foreground">
+                Expansion Registry
+              </a>
             </nav>
             <div className="mt-1 md:text-right">
               <MethodologyTrigger label="Methodology & sources" className="text-[13px]" />

@@ -12,7 +12,35 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// One row per micro-market jurisdiction inside the CRGNSA corridor.
+// ---------------------------------------------------------------------
+// Expansion registry (EXPANSION-PLAN.md §2) — one row per market region.
+// The corridor is the first LIVE region; the PNW/USA/Canada waves are
+// seeded as scaffold/planned/research rows so market expansion stays a
+// data problem (seed migrations), never a code fork.
+// ---------------------------------------------------------------------
+model Region {
+  id                String    @id @default(uuid())
+  slug              String    @unique
+  name              String
+  country           String // "USA" | "Canada"
+  statesProvinces   String // "OR + WA" | "WA" | "BC" | …
+  wave              String // "core" | "pnw" | "usa" | "canada"
+  status            String // "live" | "scaffold" | "planned" | "research"
+  scarcityHook      String // one-line regulatory scarcity story
+  regulatoryContext String // the region's statute narrative (framework explorer source)
+  taxArbitrageNote  String // the cross-border tax hook, if any
+  targetSubmarkets  Int // planned micro-market count when built out
+  launchOrder       Int // ordering within the rollout plan
+  launchedAt        DateTime? // non-null only for live regions
+  createdAt         DateTime  @default(now())
+  submarkets        Submarket[]
+
+  @@index([wave])
+  @@index([status])
+}
+
+// One row per micro-market jurisdiction inside a region (first region:
+// the CRGNSA corridor).
 model Submarket {
   id                    String            @id @default(uuid())
   slug                  String            @unique
@@ -40,11 +68,14 @@ model Submarket {
   depletionYear         Int // estimated year of terminal raw-land depletion
   mapX                  Float // 0-100 relative position on corridor map
   mapY                  Float // 0-100 relative position on corridor map
+  regionId              String?
+  region                Region?  @relation(fields: [regionId], references: [id])
   createdAt             DateTime          @default(now())
   listings              PropertyListing[]
 
   @@index([state])
   @@index([jurisdictionType])
+  @@index([regionId])
 }
 
 // Curated property listings across the corridor.

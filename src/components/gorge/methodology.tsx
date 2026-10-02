@@ -14,6 +14,7 @@ import {
   INSURANCE_RATE,
   POST_DEPLETION_CAGR,
   PROPERTY_TAX_RATES,
+  REAL_TERMS_INFLATION,
   RENTAL_RESERVE_RATE,
 } from "@/lib/gorge";
 
@@ -106,6 +107,17 @@ function MethodologyBody() {
             land-loan pricing
           </li>
         </ul>
+        <p>
+          <strong className="text-foreground">2026$ lens (round 13):</strong>{" "}
+          the Financing Lab's real-terms toggle deflates the equity-runway
+          family (2046 value, equity, return-of-equity multiple, the
+          schedule's value column) at the shared fixed{" "}
+          {REAL_TERMS_INFLATION}% deflator, while the loan balance stays
+          contractual nominal dollars — equity under the lens is real value
+          minus nominal debt, the honest purchasing-power read. The
+          adjustable deflator slider remains exclusive to the Projections
+          workspace.
+        </p>
       </Section>
 
       <Section title="3 · Income lens heuristics">
@@ -211,6 +223,30 @@ function MethodologyBody() {
           arithmetic on stated assumptions, not forecasts. Verify
           entitlements, water rights, WUI mitigation requirements, and
           tax positions with counsel before transacting.
+        </p>
+      </Section>
+
+      <Section title="7 · Expansion registry (round 13)">
+        <p>
+          <strong className="text-foreground">One codebase, N regulated markets.</strong>{" "}
+          The Regions workspace renders the rollout plan as data: a
+          <span className="font-mono"> Region </span> registry table
+          (18 rows — the corridor live, seven PNW scaffolds, six USA
+          planned, four Canada research) keyed to submarkets by
+          <span className="font-mono"> region_id</span>. Each new market
+          is a seed migration plus region-authored narratives — never a
+          code fork; a subdomain per market is granted only at proven
+          organic traction.
+        </p>
+        <p>
+          Registry rows for waves 1–3 are directional planning content:
+          the scarcity hook names the binding regime (GMA UGAs, Goal 14,
+          TRPA thresholds, the ALR, CPTAQ…) and the tax-arbitrage note
+          names the border pair the calculator will quantify once that
+          region's ledger is researched. Every launch is gated on CI +
+          the ui-audit/security-audit workflows + LIVE agent-browser QA
+          of the new region's workspaces (the launch runbook in each
+          region's dossier mirrors <span className="font-mono">docs/EXPANSION-PLAN.md §7</span>).
         </p>
       </Section>
     </div>

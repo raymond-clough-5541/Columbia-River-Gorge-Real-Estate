@@ -7,6 +7,319 @@ import { PrismaClient } from "@prisma/client";
 
 const db = new PrismaClient();
 
+/* ------------------------------------------------------------------ */
+/* Expansion registry (EXPANSION-PLAN.md) — 1 live region + 17        */
+/* pipeline rows across the PNW / USA / Canada waves.                 */
+/* ------------------------------------------------------------------ */
+const regions = [
+  {
+    slug: "columbia-river-gorge",
+    name: "Columbia River Gorge National Scenic Area",
+    country: "USA",
+    statesProvinces: "OR + WA",
+    wave: "core",
+    status: "live",
+    scarcityHook:
+      "1986 CRGNSA Act + SMA/GMA overlays + Goal 14 UGBs — six statutory layers stacked on 292,600 protected acres.",
+    regulatoryContext:
+      "The proving ground. The Columbia River Gorge National Scenic Area Act of 1986 created the country's first national-scenic-area land-use regime: a federally-appointed Commission reviewing development across 292,600 acres, layered over Oregon's Goal 14 urban growth boundaries on the south bank and Washington's Growth Management Act urban growth areas on the north bank. The result is the tightest land-supply collar in the Pacific Northwest — eleven micro-markets whose net buildable acreage, depletion horizons, and appreciation curves this platform quantifies.",
+    taxArbitrageNote:
+      "Oregon's progressive income tax (to 9.9%) vs Washington's zero personal income tax — cross-river commuting pairs (Dallesport↔The Dalles, White Salmon↔Hood River) quantify the spread.",
+    targetSubmarkets: 11,
+    launchOrder: 0,
+    launchedAt: new Date("2026-01-15T00:00:00Z"),
+  },
+  {
+    slug: "puget-sound",
+    name: "Puget Sound I-5 Corridor",
+    country: "USA",
+    statesProvinces: "WA",
+    wave: "pnw",
+    status: "scaffold",
+    scarcityHook:
+      "The original UGB scarcity market: Snohomish–King–Pierce urban growth areas pressed against the GMA's firmest lines.",
+    regulatoryContext:
+      "The Growth Management Act's flagship theater — king-county UGAs, forestland-of-statewide-significance buffers, and shoreline designations squeezing the I-5 corridor's buildable envelopes. The corridor methodology ports directly: UGA residual land bands, per-jurisdiction depletion horizons, and the same net-vs-gross buildable ledger.",
+    taxArbitrageNote:
+      "WA 0% income tax vs OR 9.9% — the mirror image of the Gorge story for Seattle-wage earners choosing residency.",
+    targetSubmarkets: 14,
+    launchOrder: 1,
+    launchedAt: null,
+  },
+  {
+    slug: "willamette-valley",
+    name: "Willamette Valley",
+    country: "USA",
+    statesProvinces: "OR",
+    wave: "pnw",
+    status: "scaffold",
+    scarcityHook:
+      "Oregon Goal 14 at metro scale — Portland UGB reserves, Salem, Corvallis, Eugene inside the nation's oldest statewide growth boundary system.",
+    regulatoryContext:
+      "The Gorge's big sibling. Senate Bill 100 (1973) gave every Oregon city an urban growth boundary and rural lands exclusive-farm-use zoning. The Willamette Valley is where that system is stress-tested by metro demand: Portland's UGB reserve studies, Salem's expansion votes, and university-town scarcity in Corvallis and Eugene.",
+    taxArbitrageNote:
+      "OR zero sales tax ↔ WA zero income tax — the two-state shuffle, quantified per commuting pair.",
+    targetSubmarkets: 12,
+    launchOrder: 2,
+    launchedAt: null,
+  },
+  {
+    slug: "vancouver-portland",
+    name: "Vancouver ↔ Portland Border",
+    country: "USA",
+    statesProvinces: "WA + OR",
+    wave: "pnw",
+    status: "scaffold",
+    scarcityHook:
+      "The border arbitrage classic: Vancouver's UGA absorbing demand that Portland's UGB wall deflects north.",
+    regulatoryContext:
+      "Two growth-boundary systems meet at the Columbia's widest bridge gap. Vancouver WA's GMA urban growth area expands against Portland's fixed Goal 14 line — the cleanest natural experiment in North America for how boundary asymmetry prices land.",
+    taxArbitrageNote:
+      "Live in WA (0% income tax), shop in OR (0% sales tax) — the classic quantified.",
+    targetSubmarkets: 9,
+    launchOrder: 3,
+    launchedAt: null,
+  },
+  {
+    slug: "bend-redmond",
+    name: "Bend / Redmond",
+    country: "USA",
+    statesProvinces: "OR",
+    wave: "pnw",
+    status: "scaffold",
+    scarcityHook:
+      "UGB + state land + water rights — Central Oregon's tri-layer scarcity at the Cascades' foot.",
+    regulatoryContext:
+      "Bend's Goal 14 boundary against publicly-owned state and federal land, with groundwater mitigation requirements in the Deschutes basin adding a hydraulic constraint on top of the legal one. The fastest-appreciating Oregon market inside the tightest water-rights regime.",
+    taxArbitrageNote:
+      "CA equity exodus economics — the arbitrage is against California's top bracket, not a neighboring state.",
+    targetSubmarkets: 10,
+    launchOrder: 4,
+    launchedAt: null,
+  },
+  {
+    slug: "hood-canal-kitsap",
+    name: "Hood Canal / Kitsap",
+    country: "USA",
+    statesProvinces: "WA",
+    wave: "pnw",
+    status: "scaffold",
+    scarcityHook:
+      "GMA UGA squeeze + the Shoreline Management Act along the canal's shellfish-sensitive shorelines.",
+    regulatoryContext:
+      "Kitsap County's UGAs are hemmed by Puget Sound on three sides; shoreline designations, salmon-critical-areas ordinances, and naval reservation buffers make the buildable band measurably thin. A ferry-adjacent scarcity market with Seattle wages one boat ride away.",
+    taxArbitrageNote:
+      "Kitsap residency against Seattle wages — WA's 0% income tax captured at ferry-commute distance.",
+    targetSubmarkets: 8,
+    launchOrder: 5,
+    launchedAt: null,
+  },
+  {
+    slug: "olympic-peninsula",
+    name: "Olympic Peninsula",
+    country: "USA",
+    statesProvinces: "WA",
+    wave: "pnw",
+    status: "scaffold",
+    scarcityHook:
+      "GMA boundaries + water availability — Sequim and Port Angeles constrained by both ordinance and hydrology.",
+    regulatoryContext:
+      "The rain-shadow side of the Olympics: retiree inflow into Clallam and Jefferson county UGAs where municipal water firm yield, not zoning, is the binding constraint in half the buildable bands.",
+    taxArbitrageNote:
+      "Retiree inflow vs CA/OR pension taxation — WA taxes neither pensions nor income.",
+    targetSubmarkets: 8,
+    launchOrder: 6,
+    launchedAt: null,
+  },
+  {
+    slug: "spokane-cda",
+    name: "Spokane ↔ Coeur d'Alene",
+    country: "USA",
+    statesProvinces: "WA + ID",
+    wave: "pnw",
+    status: "scaffold",
+    scarcityHook:
+      "GMA UGA on the Washington side vs Idaho county planning across the state line — boundary asymmetry at the Inland Empire scale.",
+    regulatoryContext:
+      "The new corridor pair: Spokane's growth-management urban growth areas press against Post Falls and Coeur d'Alene's looser county-review regimes. The same ledger method — net buildable bands per jurisdiction, depletion horizons, cross-border demand flows — that priced the Columbia Gorge applies directly.",
+    taxArbitrageNote:
+      "WA 0% income ↔ ID flat-rate income — the newest quantifiable border spread.",
+    targetSubmarkets: 9,
+    launchOrder: 7,
+    launchedAt: null,
+  },
+  {
+    slug: "boulder-county",
+    name: "Boulder County, CO",
+    country: "USA",
+    statesProvinces: "CO",
+    wave: "usa",
+    status: "planned",
+    scarcityHook:
+      "The hardest urban growth boundary in the US — a 75,000-acre service-area cap ringed by a sales-tax-funded open-space belt.",
+    regulatoryContext:
+      "Boulder's 1970s-era growth cap plus decades of open-space acquisition created the most acute boundary premium in the country. County-level transferable development rights and sub-county municipalities (Longmont, Lafayette, Louisville) give the ledger its micro-market structure.",
+    taxArbitrageNote:
+      "CO flat income tax — no border spread; the scarcity premium itself is the story.",
+    targetSubmarkets: 10,
+    launchOrder: 8,
+    launchedAt: null,
+  },
+  {
+    slug: "tahoe-basin",
+    name: "Lake Tahoe Basin",
+    country: "USA",
+    statesProvinces: "CA + NV",
+    wave: "usa",
+    status: "planned",
+    scarcityHook:
+      "TRPA bi-state regional planning — scenic-threshold and coverage caps freeze development basin-wide.",
+    regulatoryContext:
+      "The Tahoe Regional Planning Agency governs both states under a compact with Congress: impervious-coverage allocations, scenic-quality thresholds, and a development-rights marketplace. The closest American analog to the CRGNSA's federal-state overlay.",
+    taxArbitrageNote:
+      "NV 0% income tax vs CA top bracket — the Incline Village residency shuffle, quantified.",
+    targetSubmarkets: 7,
+    launchOrder: 9,
+    launchedAt: null,
+  },
+  {
+    slug: "lexington-bluegrass",
+    name: "Lexington Bluegrass, KY",
+    country: "USA",
+    statesProvinces: "KY",
+    wave: "usa",
+    status: "planned",
+    scarcityHook:
+      "Rural Service Area boundary + the nation's oldest PDR farmland-preservation program.",
+    regulatoryContext:
+      "Fayette County's 1958 urban service boundary — the country's first — plus a purchase-of-development-rights program that has permanently protected the Inner Bluegrass horse farms. The scarcity story is agricultural, cultural, and statutory at once.",
+    taxArbitrageNote:
+      "KY flat income tax — the play is land, not tax.",
+    targetSubmarkets: 8,
+    launchOrder: 10,
+    launchedAt: null,
+  },
+  {
+    slug: "montgomery-reserve",
+    name: "Montgomery County Ag Reserve, MD",
+    country: "USA",
+    statesProvinces: "MD",
+    wave: "usa",
+    status: "planned",
+    scarcityHook:
+      "A 93,000-acre Agricultural Reserve ring around DC, held by transferable development rights since 1980.",
+    regulatoryContext:
+      "The nation's most successful TDR program: downzoned farmland sells development rights into the county's down-county density receiving areas. The reserve forms a hard greenbelt around the nation's capital-region demand engine.",
+    taxArbitrageNote:
+      "MD progressive brackets + DC/VA cross-border commuting pairs.",
+    targetSubmarkets: 9,
+    launchOrder: 11,
+    launchedAt: null,
+  },
+  {
+    slug: "pinelands",
+    name: "New Jersey Pinelands",
+    country: "USA",
+    statesProvinces: "NJ",
+    wave: "usa",
+    status: "planned",
+    scarcityHook:
+      "A comprehensive management plan across a million-acre biosphere reserve — the East's CRGNSA analog.",
+    regulatoryContext:
+      "Federal legislation (1978) + an interstate compact + the Pinelands Comprehensive Management Plan govern a million acres of sandy pine barrens with strict growth-area allocation. The rural/seaside micro-market structure maps cleanly onto the corridor ledger method.",
+    taxArbitrageNote:
+      "NJ property-tax pressure vs PA just across the Delaware — a cost-of-carry arbitrage rather than income-tax.",
+    targetSubmarkets: 10,
+    launchOrder: 12,
+    launchedAt: null,
+  },
+  {
+    slug: "oahu",
+    name: "O'ahu, Hawai'i",
+    country: "USA",
+    statesProvinces: "HI",
+    wave: "usa",
+    status: "planned",
+    scarcityHook:
+      "State Land Use Urban District — island land exhaustion in its purest form.",
+    regulatoryContext:
+      "Hawai'i's State Land Use Commission classifies every acre into four districts; the Urban district on O'ahu is finite by geography. The depletion-ledger model is at its most literal here: when the urban land is built, it is done.",
+    taxArbitrageNote:
+      "High-bracket state income tax — scarcity is geographic, not fiscal.",
+    targetSubmarkets: 6,
+    launchOrder: 13,
+    launchedAt: null,
+  },
+  {
+    slug: "metro-vancouver",
+    name: "Metro Vancouver / Fraser Valley, BC",
+    country: "Canada",
+    statesProvinces: "BC",
+    wave: "canada",
+    status: "research",
+    scarcityHook:
+      "Agricultural Land Reserve + Urban Containment Boundary — the Gorge story at metro scale, in Canadian dollars.",
+    regulatoryContext:
+      "British Columbia's ALR (1973) fences the Fraser Valley's farmland while Metro Vancouver's regional growth strategy draws a hard urban containment boundary. The closest structural twin to the Columbia Gorge's statutory collar anywhere in North America.",
+    taxArbitrageNote:
+      "CAD pricing, BC PTT transfer tax + foreign-buyer band, no provincial capital-gains on a principal residence — a different carry calculus to model.",
+    targetSubmarkets: 14,
+    launchOrder: 14,
+    launchedAt: null,
+  },
+  {
+    slug: "gta-greenbelt",
+    name: "GTA / Golden Horseshoe, ON",
+    country: "Canada",
+    statesProvinces: "ON",
+    wave: "canada",
+    status: "research",
+    scarcityHook:
+      "Greenbelt + Oak Ridges Moraine + Growth Plan density targets — the most litigated land collar in Canada.",
+    regulatoryContext:
+      "Ontario's 2005 Greenbelt Act and the Growth Plan for the Greater Golden Horseshoe bound the largest urban region in Canada. Provincial policy-plan layers (greenbelt, moraine, Niagara escarpment) create the micro-market banding the ledger method needs.",
+    taxArbitrageNote:
+      "Ontario LTT + NRST layers; CREA/MLS data licensing required before any listing feed.",
+    targetSubmarkets: 16,
+    launchOrder: 15,
+    launchedAt: null,
+  },
+  {
+    slug: "montreal-cptaq",
+    name: "Montréal CMA, QC",
+    country: "Canada",
+    statesProvinces: "QC",
+    wave: "canada",
+    status: "research",
+    scarcityHook:
+      "CPTAQ agricultural-zone protection — Québec's provincial commission gates every non-farm use of zoned farmland.",
+    regulatoryContext:
+      "The Commission de protection du territoire agricole du Québec has held the metropolitan agricultural belt since 1978. Structural additions for this market: bilingual routing (Bill 96 requires a French edition), metric units, CAD formatting.",
+    taxArbitrageNote:
+      "Québec's marginal-bracket stack — with Bill 96 language compliance as the gating deliverable.",
+    targetSubmarkets: 10,
+    launchOrder: 16,
+    launchedAt: null,
+  },
+  {
+    slug: "calgary-edmonton",
+    name: "Calgary–Edmonton Corridor, AB",
+    country: "Canada",
+    statesProvinces: "AB",
+    wave: "canada",
+    status: "research",
+    scarcityHook:
+      "No greenbelt — city-limit + land fragmentation, the control case that proves the model.",
+    regulatoryContext:
+      "Alberta's unbounded prairie cities grow by annexation, not boundary statute. Including a non-greenbelt region tests the platform's core claim: that the depletion-ledger signal is produced by regulation, not by geography alone.",
+    taxArbitrageNote:
+      "AB property transfer fee only; no land-registry friction — the frictionless baseline.",
+    targetSubmarkets: 10,
+    launchOrder: 17,
+    launchedAt: null,
+  },
+];
+
 const submarkets = [
   {
     slug: "hood-river",
@@ -584,10 +897,24 @@ async function main() {
   // Wipe in dependency order.
   await db.propertyListing.deleteMany();
   await db.submarket.deleteMany();
+  await db.region.deleteMany();
+
+  const regionIdBySlug = new Map<string, string>();
+  for (const r of regions) {
+    const created = await db.region.create({ data: r });
+    regionIdBySlug.set(r.slug, created.id);
+    console.log(`  ✓ region: ${r.name} [${r.wave}/${r.status}]`);
+  }
+
+  // Every corridor micro-market belongs to the live CRGNSA region —
+  // future waves attach their submarkets to their own registry rows.
+  const crgnsaRegionId = regionIdBySlug.get("columbia-river-gorge")!;
 
   const slugToId = new Map<string, string>();
   for (const s of submarkets) {
-    const created = await db.submarket.create({ data: s });
+    const created = await db.submarket.create({
+      data: { ...s, regionId: crgnsaRegionId },
+    });
     slugToId.set(s.slug, created.id);
     console.log(`  ✓ submarket: ${s.name} (${s.state})`);
   }

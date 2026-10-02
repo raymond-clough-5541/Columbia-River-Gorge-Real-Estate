@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { useTheme } from "next-themes";
 import {
   Building2,
   Compass,
+  Globe2,
   Grape,
+  History,
   Home,
   Keyboard,
   LandPlot,
@@ -16,6 +18,7 @@ import {
   Search,
   Sun,
   Table2,
+  Trash2,
 } from "lucide-react";
 import {
   CommandDialog,
@@ -28,6 +31,14 @@ import {
   CommandShortcut,
 } from "@/components/ui/command";
 import {
+  clearRecents,
+  recentsServerSnapshot,
+  recentsSnapshot,
+  relTime,
+  subscribeRecents,
+  type RecentDestination,
+} from "@/lib/recents";
+import {
   fmtCurrency,
   fmtPct,
   type PropertyListing,
@@ -37,13 +48,14 @@ import {
 import type { NavigateFn, Route } from "./gorge-app";
 
 /* ------------------------------------------------------------------ */
-/* Command palette — ⌘K jump-anywhere layer (round 8-f, 9-c).          */
+/* Command palette — ⌘K jump-anywhere layer (round 8-f, 9-c, 13-c).    */
 /*                                                                     */
-/* One keystroke surfaces every workspace, all 11 micro-markets, the    */
-/* active listings (round 9-c: dossier pre-open jump), and the quick    */
-/* actions (theme, shortcut reference). cmdk filters on the item's     */
-/* `value` (name + state + county / zoning + type) so "Klickitat",    */
-/* "WA", or "R2" finds items without exact-name matches.              */
+/* One keystroke surfaces recent destinations, every workspace (incl.  */
+/* the round-13 Expansion Registry), all 11 micro-markets, the active  */
+/* listings (dossier pre-open jump), and the quick actions (theme,     */
+/* shortcut reference). cmdk filters on the item's `value` (name +     */
+/* state + county / zoning + type) so "Klickitat", "WA", or "R2"      */
+/* finds items without exact-name matches.                             */
 /* ------------------------------------------------------------------ */
 
 const WORKSPACES: {
@@ -81,6 +93,13 @@ const WORKSPACES: {
     shortcut: "g l",
     hint: "Search, filter, star a watchlist",
   },
+  {
+    label: "Expansion Registry",
+    icon: Globe2,
+    route: { view: "regions" },
+    shortcut: "g r",
+    hint: "Region waves — PNW, USA, Canada launch dossiers",
+  },
 ];
 
 /* Property-type → palette icon mapping:
@@ -98,6 +117,62 @@ function listingIcon(propertyType: PropertyType): typeof Home {
     default:
       return Home; // "Single-Family" — residential default.
   }
+}
+
+/* Resolve a stored destination hash into a palette entry: label + icon +
+ * route. Returns null for destinations that no longer resolve (a stale
+ * submarket slug from a reseeded DB degrades to silence, not an error). */
+function resolveDestination(
+  hash: string,
+  submarkets: Submarket[]
+): { label: string; sub?: string; icon: typeof History; route: Route } | null {
+  if (hash === "#/")
+    return {
+      label: "Executive Overview",
+      sub: "Corridor KPIs · framework · arbitrage",
+      icon: Mountain,
+      route: { view: "overview" },
+    };
+  if (hash === "#/matrix")
+    return {
+      label: "Master Matrix",
+      sub: "11-jurisdiction ledger",
+      icon: Table2,
+      route: { view: "matrix" },
+    };
+  if (hash === "#/projections")
+    return {
+      label: "Projections",
+      sub: "Compound curves · scenarios",
+      icon: LineChart,
+      route: { view: "projections" },
+    };
+  if (hash === "#/listings")
+    return {
+      label: "Listings Showcase",
+      sub: "Search · filter · watchlist",
+      icon: Search,
+      route: { view: "listings" },
+    };
+  if (hash === "#/regions")
+    return {
+      label: "Expansion Registry",
+      sub: "Region waves · launch dossiers",
+      icon: Globe2,
+      route: { view: "regions" },
+    };
+  const m = hash.match(/^#\/submarket\/([\w-]+)$/);
+  if (m) {
+    const market = submarkets.find((s) => s.slug === m[1]);
+    if (!market) return null;
+    return {
+      label: market.name,
+      sub: `${market.county} · micro-market profile`,
+      icon: Map,
+      route: { view: "submarket", slug: market.slug },
+    };
+  }
+  return null;
 }
 
 export function CommandPalette({
@@ -121,6 +196,16 @@ export function CommandPalette({
 }) {
   const { resolvedTheme, setTheme } = useTheme();
 
+  // Destination memory as an external store (round 13-c): the router
+  // pushes to it from every completed navigation; this re-renders via
+  // subscription, never setState-in-effect. Server snapshot is empty —
+  // the group only ever appears client-side after real navigation.
+  const recents = useSyncExternalStore(
+    subscribeRecents,
+    recentsSnapshot,
+    recentsServerSnapshot
+  );
+
   /* Global ⌘K / Ctrl+K arm — works even while typing in a field
      (standard palette behavior; plain-letter shortcuts stay gated
      behind isTypingTarget in shortcuts.tsx). */
@@ -142,6 +227,20 @@ export function CommandPalette({
     fn();
   };
 
+  const resolvedRecents = recents
+    .map((r) => ({ ...r, dest: resolveDestination(r.hash, submarkets) }))
+    .filter(
+      (
+        r
+      ): r is RecentDestination & {
+        dest: NonNullable<ReturnType<typeof resolveDestination>>;
+      } => r.dest !== null
+    );
+
+  const clearRecentMemory = () => {
+    clearRecents();
+  };
+
   return (
     <CommandDialog
       open={open}
@@ -159,6 +258,57 @@ export function CommandPalette({
       />
       <CommandList>
         <CommandEmpty>No matches in the corridor.</CommandEmpty>
+
+        {resolvedRecents.length > 0 ? (
+          <>
+            <CommandGroup
+              heading={`Recent · last ${resolvedRecents.length} ${
+                resolvedRecents.length === 1 ? "destination" : "destinations"
+              }`}
+            >
+              {resolvedRecents.map((r) => (
+                <CommandItem
+                  key={r.hash}
+                  value={`recent ${r.dest.label} ${r.dest.sub ?? ""}`}
+                  onSelect={() => run(() => navigate(r.dest.route))}
+                  className="gap-2.5"
+                >
+                  <r.dest.icon
+                    className="h-4 w-4 shrink-0 text-muted-foreground"
+                    aria-hidden
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[13.5px] font-medium leading-tight">
+                      {r.dest.label}
+                    </span>
+                    {r.dest.sub ? (
+                      <span className="block truncate text-[11px] text-muted-foreground">
+                        {r.dest.sub}
+                      </span>
+                    ) : null}
+                  </span>
+                  <span className="shrink-0 text-[10.5px] tabular-nums text-muted-foreground">
+                    {relTime(r.at)}
+                  </span>
+                </CommandItem>
+              ))}
+              <CommandItem
+                value="clear recent destinations history forget"
+                onSelect={clearRecentMemory}
+                className="gap-2.5"
+              >
+                <Trash2
+                  className="h-4 w-4 shrink-0 text-muted-foreground"
+                  aria-hidden
+                />
+                <span className="text-[12.5px] text-muted-foreground">
+                  Clear recent destinations
+                </span>
+              </CommandItem>
+            </CommandGroup>
+            <CommandSeparator />
+          </>
+        ) : null}
 
         <CommandGroup heading="Workspaces">
           {WORKSPACES.map((w) => (

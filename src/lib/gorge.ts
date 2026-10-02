@@ -90,6 +90,111 @@ export interface CorridorStats {
 }
 
 /* ------------------------------------------------------------------ */
+/* Expansion registry (round 13) — market regions + rollout waves      */
+/* ------------------------------------------------------------------ */
+
+export type RegionStatus = "live" | "scaffold" | "planned" | "research";
+export type RegionWave = "core" | "pnw" | "usa" | "canada";
+
+/** Aggregates computed from a region's attached submarkets (live regions). */
+export interface RegionAggregate {
+  marketCount: number;
+  listingCount: number;
+  netBuildableMid: number;
+  averageCagr: number;
+  medianBaseline: number;
+}
+
+export interface Region {
+  id: string;
+  slug: string;
+  name: string;
+  country: string;
+  statesProvinces: string;
+  wave: RegionWave;
+  status: RegionStatus;
+  scarcityHook: string;
+  regulatoryContext: string;
+  taxArbitrageNote: string;
+  targetSubmarkets: number;
+  launchOrder: number;
+  launchedAt: string | null;
+  aggregate?: RegionAggregate | null;
+}
+
+export const REGION_STATUS_STYLES: Record<
+  RegionStatus,
+  { label: string; className: string; dot: string }
+> = {
+  live: {
+    label: "Live",
+    className:
+      "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+    dot: "bg-emerald-500",
+  },
+  scaffold: {
+    label: "Scaffold",
+    className:
+      "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+    dot: "bg-amber-500",
+  },
+  planned: {
+    label: "Planned",
+    className:
+      "border-zinc-500/40 bg-zinc-500/10 text-zinc-600 dark:text-zinc-300",
+    dot: "bg-zinc-500",
+  },
+  research: {
+    label: "Research",
+    className:
+      "border-violet-500/40 bg-violet-500/10 text-violet-700 dark:text-violet-300",
+    dot: "bg-violet-500",
+  },
+};
+
+export const REGION_WAVES: {
+  id: RegionWave;
+  label: string;
+  window: string;
+  description: string;
+}[] = [
+  {
+    id: "core",
+    label: "Wave 0 · Live now",
+    window: "shipping",
+    description:
+      "The proving ground — the corridor that built the methodology.",
+  },
+  {
+    id: "pnw",
+    label: "Wave 1 · Pacific Northwest",
+    window: "months 0–6",
+    description:
+      "Seven boundary-driven markets sharing the corridor's statutory DNA.",
+  },
+  {
+    id: "usa",
+    label: "Wave 2 · United States",
+    window: "months 6–18",
+    description:
+      "The strongest growth-collar regimes in the country, east and west.",
+  },
+  {
+    id: "canada",
+    label: "Wave 3 · Canada",
+    window: "months 18–30",
+    description:
+      "Greenbelt country — the scarcity premise is native; the compliance surface changes.",
+  },
+];
+
+/** Fixed deflator for the real-terms (2026$) display lenses outside the
+ *  Projections workspace (compare sheet round 11 + financing lab round 13).
+ *  The Projections workspace owns the adjustable slider — one knob there,
+ *  a consistent fixed assumption everywhere the lens is a display toggle. */
+export const REAL_TERMS_INFLATION = 2.5;
+
+/* ------------------------------------------------------------------ */
 /* Formatting helpers                                                  */
 /* ------------------------------------------------------------------ */
 

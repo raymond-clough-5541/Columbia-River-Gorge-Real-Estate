@@ -1,0 +1,28 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "Based on the provided 390px mobile viewport screenshot, here is the QA verdict for the Expansion Registry analytics page:\n\n**1) Any horizontal overflow or clipped content?**\n**Verdict: PASS.** The layout appears to be fully contained within the 390px width. There are no visible horizontal scrollbars, and text content (including long descriptions like \"statutory scarcity...\") wraps correctly to the next line without being cut off. The padding and margins look consistent with a responsive mobile design.\n\n**2) Are the KPI stat cards stacked legibly?**\n**Verdict: PASS.** The cards (Live Regions, PNW Wave, USA + Canada Pipeline) are stacked vertically with clear separation. The hierarchy is distinct:\n*   **Headers** (e.g., \"LIVE REGIONS\") are clearly legible in uppercase.\n*   **Large Numerics** (1, 7, 10) provide immediate visual anchors.\n*   **Subtext** is readable and wraps appropriately.\n*   **Spacing** between cards is sufficient to distinguish individual data points.\n\n**3) Is at least one region card visible with its name, status badge, and footer row intact?**\n**Verdict: PASS.** All three visible cards demonstrate this structure perfectly:\n*   **\"LIVE REGIONS\"**: Shows the name, a green \"active\" icon/badge (top right), and the footer row (\"11 markets • 16 listings...\").\n*   **\"PNW WAVE - SCAFFOLDS\"**: Shows the name, a yellow/gold \"stack\" icon badge, and the footer row (\"months 0-6...\").\n*   **\"USA + CANADA PIPELINE\"**: Shows the name, a flag icon badge, and the partial footer row (\"planned • 4 research...\").\n\n**Overall Summary:** The page renders cleanly on mobile (390px) with no overflow issues, legible stacking of analytics cards, and complete visibility of all critical card components (name, status indicator, and metadata).",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": 1790927067,
+  "id": "2026100215442085b2eab829014d64",
+  "model": "glm-5v-turbo",
+  "object": "chat.completion",
+  "request_id": "2026100215442085b2eab829014d64",
+  "usage": {
+    "completion_tokens": 420,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "prompt_tokens": 454,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "total_tokens": 874
+  }
+}

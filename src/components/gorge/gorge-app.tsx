@@ -3,7 +3,13 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { ArrowUp } from "lucide-react";
-import type { CorridorStats, PropertyListing, Submarket } from "@/lib/gorge";
+import type {
+  CorridorStats,
+  PropertyListing,
+  Region,
+  Submarket,
+} from "@/lib/gorge";
+import { pushRecent } from "@/lib/recents";
 import { SiteHeader } from "./site-header";
 import { SiteFooter } from "./site-footer";
 import { OverviewView } from "./overview";
@@ -11,6 +17,7 @@ import { MatrixView } from "./matrix";
 import { ProjectionsView } from "./projections";
 import { ListingsView } from "./listings-view";
 import { SubmarketDetailView } from "./submarket-detail";
+import { RegionsView } from "./regions";
 import { KeyboardShortcuts } from "./shortcuts";
 import { CommandPalette } from "./command-palette";
 
@@ -25,7 +32,8 @@ export type Route =
   | { view: "matrix" }
   | { view: "projections"; query?: string }
   | { view: "listings" }
-  | { view: "submarket"; slug: string };
+  | { view: "submarket"; slug: string }
+  | { view: "regions" };
 
 export type NavigateFn = (route: Route) => void;
 
@@ -43,6 +51,8 @@ export function routeToHash(route: Route): string {
       return "#/listings";
     case "submarket":
       return `#/submarket/${route.slug}`;
+    case "regions":
+      return "#/regions";
   }
 }
 
@@ -53,6 +63,7 @@ export function parseHash(hash: string): Route {
   if (parts[0] === "matrix") return { view: "matrix" };
   if (parts[0] === "projections") return { view: "projections" };
   if (parts[0] === "listings") return { view: "listings" };
+  if (parts[0] === "regions") return { view: "regions" };
   if (parts[0] === "submarket" && parts[1]) {
     return { view: "submarket", slug: parts[1] };
   }
@@ -96,6 +107,7 @@ export interface GorgeAppProps {
   submarkets: Submarket[];
   listings: PropertyListing[];
   stats: CorridorStats;
+  regions: Region[];
 }
 
 /** Lint-safe scroll-position flag via useSyncExternalStore. */
@@ -136,7 +148,12 @@ function BackToTop() {
   );
 }
 
-export function GorgeApp({ submarkets, listings, stats }: GorgeAppProps) {
+export function GorgeApp({
+  submarkets,
+  listings,
+  stats,
+  regions,
+}: GorgeAppProps) {
   const route = useSyncExternalStore(subscribeHash, getHashRoute, () => SERVER_ROUTE);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -145,6 +162,14 @@ export function GorgeApp({ submarkets, listings, stats }: GorgeAppProps) {
     // Normalize an empty hash to "#/" once on mount.
     if (!window.location.hash) window.history.replaceState(null, "", "#/");
   }, []);
+
+  // Round 13 — recent-destinations memory: every completed navigation
+  // (anchor, palette jump, or goto sequence) lands here, capped + deduped
+  // by the store. Query-stripped so share-link parameter changes never
+  // spam the stack.
+  useEffect(() => {
+    pushRecent(routeToHash(route));
+  }, [route]);
 
   const navigate: NavigateFn = useCallback((next: Route) => {
     // Setting the hash fires hashchange → the external store re-parses and
@@ -218,6 +243,9 @@ export function GorgeApp({ submarkets, listings, stats }: GorgeAppProps) {
                 listings={listings}
                 navigate={navigate}
               />
+            ) : null}
+            {route.view === "regions" ? (
+              <RegionsView regions={regions} navigate={navigate} />
             ) : null}
           </motion.div>
         </AnimatePresence>
