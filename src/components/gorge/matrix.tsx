@@ -12,6 +12,7 @@ import {
   Droplets,
   ExternalLink,
   Flame,
+  Link2,
   Pin,
   PinOff,
   Recycle,
@@ -351,6 +352,35 @@ export function MatrixView({
     }
   };
 
+  /** Copy — don't navigate — a share link that opens Projections with the
+   *  pinned set preloaded. It reuses the exact m=…&s=1 serialization the
+   *  modeling chip navigates with (the params Projections restores on
+   *  mount), so a pasted link rebuilds precisely what the pinner sees.
+   *  The drill-from breadcrumb stays unstamped: a shared recipient gets a
+   *  clean Projections session, not a "← back to matrix" chip. */
+  const sharePinnedSet = async () => {
+    if (!pinnedSet) return; // only reachable from inside the strip
+    const url = `${window.location.origin}${window.location.pathname}#/projections?m=${pins.join(",")}&s=1`;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+      } else {
+        throw new Error("clipboard unavailable");
+      }
+      toast({
+        title: "Share link copied",
+        description: `Anyone opening it lands in Projections with ${pins.length} pinned market${pins.length === 1 ? "" : "s"} preloaded — ${pinnedSet.names}.`,
+      });
+    } catch {
+      // Headless/embedded contexts block clipboard writes — surface the
+      // URL itself so it can still be transcribed or select-copied by hand.
+      toast({
+        title: "Couldn't reach the clipboard",
+        description: `Copy it manually: ${url}`,
+      });
+    }
+  };
+
   return (
     <div className="mx-auto w-full max-w-7xl px-4 pb-16 pt-10 sm:px-6 lg:px-8">
       <SectionHeader
@@ -555,31 +585,46 @@ export function MatrixView({
               </div>
             </div>
 
-            {/* Cross-workspace action — preloads the pinned set (≤3 pins,
-                well under the Projections selection cap of 5). */}
-            <button
-              type="button"
-              onClick={() => {
-                // Breadcrumb flag — lets Projections offer "← back to matrix".
-                try {
-                  sessionStorage.setItem("crgnsa-drill-from", "matrix");
-                } catch {
-                  /* storage unavailable — no back-link */
-                }
-                navigate({
-                  view: "projections",
-                  query: `m=${pins.join(",")}&s=1`,
-                });
-              }}
-              title="Open the Projections workspace with the pinned set preloaded"
-              className="group/model inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-amber-400/60 bg-amber-400/10 px-2.5 text-[12px] font-medium text-amber-700 transition-all hover:bg-amber-400/20 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60 dark:text-amber-300"
-            >
-              Model the pinned set
-              <ArrowRight
-                className="h-3.5 w-3.5 shrink-0 transition-transform group-hover/model:translate-x-0.5"
-                aria-hidden
-              />
-            </button>
+            {/* Cross-workspace actions — grouped so the modeling chip and
+                its copy-link twin wrap as one unit on narrow viewports
+                (≤3 pins, well under the Projections selection cap of 5). */}
+            <div className="flex shrink-0 items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  // Breadcrumb flag — lets Projections offer "← back to matrix".
+                  try {
+                    sessionStorage.setItem("crgnsa-drill-from", "matrix");
+                  } catch {
+                    /* storage unavailable — no back-link */
+                  }
+                  navigate({
+                    view: "projections",
+                    query: `m=${pins.join(",")}&s=1`,
+                  });
+                }}
+                title="Open the Projections workspace with the pinned set preloaded"
+                className="group/model inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-amber-400/60 bg-amber-400/10 px-2.5 text-[12px] font-medium text-amber-700 transition-all hover:bg-amber-400/20 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60 dark:text-amber-300"
+              >
+                Model the pinned set
+                <ArrowRight
+                  className="h-3.5 w-3.5 shrink-0 transition-transform group-hover/model:translate-x-0.5"
+                  aria-hidden
+                />
+              </button>
+              {/* Copy-link twin of the modeling chip — shares the pinned
+                  analysis instead of navigating to it (see sharePinnedSet
+                  for why the drill-from flag stays unstamped here). */}
+              <button
+                type="button"
+                onClick={sharePinnedSet}
+                aria-label="Copy a share link for the pinned set"
+                title="Copy a share link — opens Projections with this pinned set preloaded"
+                className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-amber-400/60 bg-amber-400/10 text-amber-700 transition-all hover:bg-amber-400/20 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60 dark:text-amber-300"
+              >
+                <Link2 className="h-3.5 w-3.5" aria-hidden />
+              </button>
+            </div>
           </div>
         </section>
       ) : null}

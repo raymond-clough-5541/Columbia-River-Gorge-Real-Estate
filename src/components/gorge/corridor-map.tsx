@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Flame, Landmark, Layers, Pause, Play, RotateCcw, Timer, TrendingUp } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
@@ -103,6 +103,16 @@ export function CorridorMap({
     yearRef.current = timelineYear;
   }, [timelineYear]);
 
+  // One-shot autoplay guards for the depletion timeline. hasAutoPlayedRef
+  // latches the first (and only) automatic sweep so it can never re-arm —
+  // not even when the sweep ends at 2046. userInteractedRef records that a
+  // human has already driven the timeline (play/pause, reset, scrub), which
+  // always outranks autoplay: if they've touched it, we never yank it away.
+  const hasAutoPlayedRef = useRef(false);
+  const userInteractedRef = useRef(false);
+  // Root element ref — the IntersectionObserver target for autoplay-on-view.
+  const rootRef = useRef<HTMLDivElement | null>(null);
+
   // prefers-reduced-motion — matched lazily after mount (matchMedia is
   // browser-only; reading it during render would break SSR/hydration) and
   // kept live via the change event, so a mid-session preference change
@@ -149,10 +159,18 @@ export function CorridorMap({
   }, [playing, reducedMotion]);
 
   const scrub = (year: number) => {
+    // Scrubbing (slider drag, keyboard step, or the reset button) is manual
+    // control of the timeline — autoplay stands down permanently.
+    userInteractedRef.current = true;
     setPlaying(false);
     setTimelineYear(year);
   };
-  const togglePlay = () => {
+  // useCallback so the autoplay observer effect below can call the existing
+  // play path without re-arming on every render (identity only flips when
+  // `playing` does — at most twice per sweep).
+  const togglePlay = useCallback(() => {
+    // Manual play/pause is likewise manual control — disable autoplay.
+    userInteractedRef.current = true;
     if (playing) {
       setPlaying(false);
       return;
@@ -160,7 +178,41 @@ export function CorridorMap({
     // At the end of the reel, play restarts from the 2026 baseline.
     if (yearRef.current >= T1) setTimelineYear(T0);
     setPlaying(true);
-  };
+  }, [playing]);
+
+  /* Autoplay-once-in-view: the map sits deep in the overview page and many
+     readers never reach the scrubber by hand. The first time 35% of the
+     component scrolls into view — and only if the user hasn't already
+     played/scrubbed, playback isn't running, and reduced motion is off —
+     start the depletion sweep exactly once through the normal play path.
+     The observer disconnects as soon as it has fired and the effect cleans
+     up on unmount; the hasAutoPlayedRef latch guarantees no restart loop
+     when the sweep reaches 2046 (end-of-reel restart stays manual-only). */
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        // First crossing of the threshold: stop observing before deciding,
+        // so a single observer instance can never fire twice.
+        observer.disconnect();
+        if (
+          hasAutoPlayedRef.current ||
+          userInteractedRef.current ||
+          playing ||
+          reducedMotion // reduced motion ⇒ no autoplay at all, not even discrete steps
+        ) {
+          return;
+        }
+        hasAutoPlayedRef.current = true;
+        togglePlay();
+      },
+      { threshold: 0.35 },
+    );
+    observer.observe(root);
+    return () => observer.disconnect();
+  }, [playing, reducedMotion, togglePlay]);
 
   const spentCount = useMemo(
     () => submarkets.filter((s) => timelineYear >= s.depletionYear).length,
@@ -189,6 +241,10 @@ export function CorridorMap({
     // 2 + 3 · Live reserve + next exhaustion, one pass over the corridor.
     let fullReserve = 0;
     let liveReserve = 0;
+    // Per-state split of the live reserve at the scrub year (OR slate /
+    // WA emerald in the reserve tile's split bar).
+    let liveReserveOR = 0;
+    let liveReserveWA = 0;
     let liveMarkets = 0;
     let next: { year: number; name: string; yearsOut: number; tierColor: string } | null =
       null;
@@ -197,6 +253,8 @@ export function CorridorMap({
       fullReserve += acresMid;
       if (timelineYear < s.depletionYear) {
         liveReserve += acresMid;
+        if (s.state === "OR") liveReserveOR += acresMid;
+        else liveReserveWA += acresMid;
         liveMarkets += 1;
         if (!next || s.depletionYear < next.year) {
           next = {
@@ -209,8 +267,21 @@ export function CorridorMap({
       }
     }
     const reservePct = fullReserve > 0 ? (liveReserve / fullReserve) * 100 : 0;
+    // OR's share of the live reserve for the split bar; 0 (not NaN) when
+    // the corridor is fully built out and there is nothing left to split.
+    const liveReserveORShare = liveReserve > 0 ? (liveReserveOR / liveReserve) * 100 : 0;
 
-    return { medianPrice, priceDeltaPct, liveReserve, liveMarkets, reservePct, next };
+    return {
+      medianPrice,
+      priceDeltaPct,
+      liveReserve,
+      liveReserveOR,
+      liveReserveWA,
+      liveReserveORShare,
+      liveMarkets,
+      reservePct,
+      next,
+    };
   }, [submarkets, stats.regionalMedianPrice, timelineYear]);
 
   const dots = useMemo(
@@ -232,7 +303,7 @@ export function CorridorMap({
     : 50;
 
   return (
-    <div className="rounded-xl border bg-card p-4 shadow-sm sm:p-6">
+    <div ref={rootRef} className="rounded-xl border bg-card p-4 shadow-sm sm:p-6">
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
           <MicroLabel>Regional Map Summary</MicroLabel>
@@ -515,7 +586,7 @@ export function CorridorMap({
           </p>
         </div>
 
-        <div className="rounded-lg border bg-muted/30 p-3">
+        <div className="min-w-0 rounded-lg border bg-muted/30 p-3">
           <div className="flex items-center gap-1.5">
             <Layers className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
             <MicroLabel className="min-w-0">Live buildable reserve</MicroLabel>
@@ -534,6 +605,32 @@ export function CorridorMap({
             {kpis.liveMarkets === 0
               ? "corridor fully built out"
               : `${Math.round(kpis.reservePct)}% of the 2026 reserve`}
+          </p>
+          {/* OR/WA split of the live reserve at the scrub year — slate =
+              Oregon, emerald = Washington; muted zinc once nothing is left.
+              Purely decorative: the caption below carries the same data as
+              real text, so the bar itself stays hidden from screen readers. */}
+          <div className="mt-2 flex h-1.5 overflow-hidden rounded-full bg-muted" aria-hidden>
+            {kpis.liveReserve > 0 ? (
+              <>
+                <div
+                  className="h-full bg-slate-500 dark:bg-slate-400"
+                  style={{ width: `${kpis.liveReserveORShare}%` }}
+                />
+                <div
+                  className="h-full bg-emerald-500"
+                  style={{ width: `${100 - kpis.liveReserveORShare}%` }}
+                />
+              </>
+            ) : (
+              <div className="h-full w-full bg-zinc-300/70 dark:bg-zinc-700/70" />
+            )}
+          </div>
+          <p className="mt-1 min-w-0 truncate text-[10.5px] tabular-nums text-muted-foreground">
+            <span className="font-medium text-slate-600 dark:text-slate-300">OR</span>{" "}
+            {fmtAcres(kpis.liveReserveOR)} ·{" "}
+            <span className="font-medium text-emerald-600 dark:text-emerald-400">WA</span>{" "}
+            {fmtAcres(kpis.liveReserveWA)}
           </p>
         </div>
 
@@ -641,6 +738,15 @@ export function CorridorMap({
             max={T1}
             step={1}
             onValueChange={(v) => scrub(v[0])}
+            // Capture-phase listeners flag manual control even when a press
+            // or keypress doesn't (yet) move the value — autoplay must never
+            // yank the slider out from under a user who has just grabbed it.
+            onPointerDownCapture={() => {
+              userInteractedRef.current = true;
+            }}
+            onKeyDownCapture={() => {
+              userInteractedRef.current = true;
+            }}
             aria-label="Scrub the depletion timeline year"
           />
           {/* Exhaustion-year tick marks, punched out of the track */}

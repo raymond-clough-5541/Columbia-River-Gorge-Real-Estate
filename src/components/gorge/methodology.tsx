@@ -109,6 +109,18 @@ function MethodologyBody() {
           maintenance, and management; cash-on-cash divides annual cash
           flow after the full note carry by the down stroke.
         </p>
+        <p>
+          <strong className="text-foreground">Seasonality band:</strong> the
+          Gorge rental market is tourism-shaped — windsurfing, mountain
+          biking, and harvest demand concentrate Jun–Sep while winter
+          tenancy discounts. The Financing Lab therefore lets the rent
+          heuristic run in one of three corridor-wide bands: Lean ×0.88
+          (winter-weighted tenancy, Nov–Mar), Annualized ×1.00 (full-year
+          blended lease, the default everywhere else on the platform), and
+          Peak ×1.15 (summer short-term-rental premium net of shoulder
+          vacancy). The band multiplies the market-indexed base rate before
+          the investor posture and the operating reserve are applied.
+        </p>
       </Section>
 
       <Section title="4 · Watchlist comparison sheet">
@@ -123,13 +135,16 @@ function MethodologyBody() {
         </p>
         <p>
           <strong className="text-foreground">What-if entries:</strong> the
-          sheet can underwrite one hypothetical listing at a target price
-          point alongside the real stars. It flows through the identical
-          underwriting posture and can win rows and verdict picks — the amber
-          column is a pencil, not a parcel. The starred set itself exports to
-          a self-describing JSON document and restores on any device running
-          this inventory; ids the inventory no longer knows are skipped with
-          a note rather than silently dropped.
+          sheet can underwrite up to three hypothetical listings at a time
+          alongside the real stars — entry vs premium price points, or a
+          land pencil against improved product. Each flows through the
+          identical underwriting posture and can win rows and verdict
+          picks — the amber columns are pencils, not parcels. The starred
+          set itself exports to a self-describing JSON document; restores
+          open a preview that lists every listing in the file (with
+          known-vs-unknown status) before anything is written, and ids the
+          inventory no longer knows are skipped with a note rather than
+          silently dropped.
         </p>
       </Section>
 
@@ -147,9 +162,12 @@ function MethodologyBody() {
           jurisdictions, average their growth rates arithmetically, and
           compound that blend over the full 2026–2046 horizon — an honest
           first-order sketch of the pinned corridor slice, not a
-          portfolio-weighted forecast. The corridor-map timeline readouts
-          apply the same per-market compounding at the scrub year, with
-          spent markets contributing zero remaining reserve.
+          portfolio-weighted forecast. The pinned set also serializes to a
+          share link that preloads Projections with the same markets.
+          The corridor-map timeline readouts apply the same per-market
+          compounding at the scrub year, with spent markets contributing
+          zero remaining reserve; the state split further partitions that
+          live reserve between Oregon and Washington at the scrub year.
         </p>
       </Section>
 
@@ -218,6 +236,7 @@ export function MethodologyTrigger({
         type="button"
         onClick={() => setOpen(true)}
         aria-haspopup="dialog"
+        data-methodology-trigger
         className={cn(
           "inline-flex items-center gap-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60 focus-visible:ring-offset-1 rounded-sm",
           variant === "button"

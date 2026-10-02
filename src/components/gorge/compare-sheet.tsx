@@ -58,9 +58,10 @@ import { StateBadge } from "./shared";
 /* ------------------------------------------------------------------ */
 /* Watchlist comparison sheet — starred listings side-by-side with     */
 /* financing + income-lens metrics, best-in-class highlighting, and    */
-/* an income-vs-appreciation verdict. Round 7-b adds ONE hypothetical  */
-/* "what-if" column (amber) at a target price point, underwritten by   */
-/* the exact same sheet + winner logic as the live listings.           */
+/* an income-vs-appreciation verdict. Round 8-a runs up to THREE       */
+/* hypothetical "what-if" columns (amber) side by side — entry vs      */
+/* premium vs land play — each underwritten by the exact same sheet    */
+/* + winner logic as the live listings.                                */
 /* ------------------------------------------------------------------ */
 
 /** Standard underwriting posture for the sheet (documented in the header). */
@@ -70,10 +71,30 @@ const SHEET_TERM = 30;
 const LAND_DOWN_PCT = 35;
 const LAND_RATE = 8.5;
 
-/* ------------------------ what-if (round 7-b) ----------------------- */
+/* -------------------- what-ifs (round 7-b → 8-a) -------------------- */
 
-/** Singleton id of the hypothetical column injected by the editor. */
+/** Shared id prefix for every hypothetical column ("what-if-1"…"what-if-3").
+ *  Live listing ids are Prisma uuids, so a prefix test can't false-positive.
+ *  `isWhatIf` is the single source of truth for verdict/CSV tagging. */
 const WHAT_IF_ID = "what-if";
+/** Hard cap — three hypotheticals (entry / premium / land play) is where
+ *  the sheet stays readable; past that columns stop comparing and start
+ *  wallpapering. Matches the matrix's 3-pin convention. */
+const WHAT_IF_MAX = 3;
+const whatIfId = (slot: number) => `${WHAT_IF_ID}-${slot}`;
+const isWhatIf = (id: string) => id.startsWith(`${WHAT_IF_ID}-`);
+
+/** Smallest unused slot 1..WHAT_IF_MAX, so ids stay canonical AND unique
+ *  across add → remove → add churn (["-1", "-3"] refills "-2", never a
+ *  dupe). Unreachable overflow slot keeps the helper total. */
+const nextWhatIfSlot = (existing: PropertyListing[]): number => {
+  const used = new Set(existing.map((w) => w.id));
+  for (let slot = 1; slot <= WHAT_IF_MAX; slot += 1) {
+    if (!used.has(whatIfId(slot))) return slot;
+  }
+  return WHAT_IF_MAX + 1;
+};
+
 const WHAT_IF_MIN_PRICE = 50_000;
 const WHAT_IF_PRICE_STEP = 5_000;
 const WHAT_IF_MAX_SQFT = 15_000;
@@ -92,8 +113,22 @@ const WHAT_IF_TYPES: PropertyType[] = [
 const autoWhatIfLabel = (price: number) =>
   `What-if ${fmtCurrency(price, { compact: true })}`;
 
-/** Matches the auto-generated label so "Edit" reopens with a blank field. */
-const WHAT_IF_AUTO_LABEL = /^What-if \$[0-9.]+[kM]$/;
+/** Round 8-a: two what-ifs at the same price point would auto-label
+ *  identically and become indistinguishable amber columns — append
+ *  " · 2"/" · 3" until the title is free. Custom labels may collide;
+ *  that's the user's call, no enforcement. */
+const uniqueAutoWhatIfLabel = (
+  price: number,
+  existing: PropertyListing[]
+): string => {
+  const base = autoWhatIfLabel(price);
+  if (!existing.some((w) => w.title === base)) return base;
+  for (let n = 2; n <= WHAT_IF_MAX; n += 1) {
+    const candidate = `${base} · ${n}`;
+    if (!existing.some((w) => w.title === candidate)) return candidate;
+  }
+  return base; // unreachable at ≤3 entries — keeps the helper total
+};
 
 const clampWhatIfNumber = (raw: string, min: number, max: number): number => {
   const n = Number(raw);
@@ -328,11 +363,12 @@ export function CompareSheet({
         .filter((l): l is PropertyListing => Boolean(l)),
     [watchlist, listings]
   );
-  /* ---- Hypothetical what-if column (round 7-b) ----
-     At most ONE synthetic listing. The state lives here — the sheet stays
-     mounted across open/close via CompareTrigger — so the what-if survives
-     closing and reopening the sheet for the whole session. */
-  const [whatIf, setWhatIf] = useState<PropertyListing | null>(null);
+  /* ---- Hypothetical what-if columns (round 8-a) ----
+     Up to WHAT_IF_MAX synthetic listings underwrite side by side, in
+     creation order. The array lives here — the sheet stays mounted across
+     open/close via CompareTrigger — so the hypotheticals survive closing
+     and reopening the sheet for the whole session. */
+  const [whatIfs, setWhatIfs] = useState<PropertyListing[]>([]);
   const [editorOpen, setEditorOpen] = useState(false);
   const [form, setForm] = useState<WhatIfForm>({
     price: "",
@@ -348,10 +384,10 @@ export function CompareSheet({
     [submarkets]
   );
 
-  const entries = useMemo(() => {
-    const base = starred.map(underwrite);
-    return whatIf ? [...base, underwrite(whatIf)] : base;
-  }, [starred, whatIf]);
+  const entries = useMemo(
+    () => [...starred.map(underwrite), ...whatIfs.map(underwrite)],
+    [starred, whatIfs]
+  );
 
   const bestIncome = useMemo(() => {
     const improved = entries.filter((m) => !m.isLand);
@@ -364,7 +400,10 @@ export function CompareSheet({
   }, [entries]);
 
   /* ---- What-if editor plumbing (all toasts fire in event handlers,
-     never inside state updaters — the round-6 bug class). ---- */
+     never inside state updaters — the round-6 bug class). The editor is
+     ADD-only as of round 8-a: every open resets to starred-derived
+     defaults, and the 3-entry limit is gated here so a 4th column can
+     never even open the form. ---- */
 
   const canWhatIf = starred.length >= 2 && sortedSubmarkets.length > 0;
 
@@ -382,6 +421,16 @@ export function CompareSheet({
 
   const handleEditorOpenChange = (next: boolean) => {
     if (next) {
+      // Limit gate at open time (event-handler context, never an updater) —
+      // the toast fires once per click and the popover simply stays closed.
+      if (whatIfs.length >= WHAT_IF_MAX) {
+        toast({
+          title: "What-if limit reached",
+          description:
+            "Three hypotheticals at a time — remove one to add another.",
+        });
+        return;
+      }
       const firstStarredSlug = starred[0]?.submarket?.slug ?? "";
       const defaultSlug = sortedSubmarkets.some(
         (s) => s.slug === firstStarredSlug
@@ -389,15 +438,12 @@ export function CompareSheet({
         ? firstStarredSlug
         : (sortedSubmarkets[0]?.slug ?? "");
       setForm({
-        price: whatIf ? String(whatIf.price) : String(defaultWhatIfPrice),
-        type: whatIf ? whatIf.propertyType : "Single-Family",
-        market: whatIf?.submarket?.slug ?? defaultSlug,
-        sqft: whatIf ? String(whatIf.squareFeet) : String(WHAT_IF_DEFAULT_SQFT),
-        acreage: whatIf
-          ? String(whatIf.acreage)
-          : String(WHAT_IF_DEFAULT_ACREAGE),
-        label:
-          whatIf && !WHAT_IF_AUTO_LABEL.test(whatIf.title) ? whatIf.title : "",
+        price: String(defaultWhatIfPrice),
+        type: "Single-Family",
+        market: defaultSlug,
+        sqft: String(WHAT_IF_DEFAULT_SQFT),
+        acreage: String(WHAT_IF_DEFAULT_ACREAGE),
+        label: "",
       });
     }
     setEditorOpen(next);
@@ -405,6 +451,16 @@ export function CompareSheet({
 
   const submitWhatIf = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    // Defensive double-gate: the popover can't open at the limit, but a
+    // stray Enter (or a future programmatic submit) must not grow a 4th column.
+    if (whatIfs.length >= WHAT_IF_MAX) {
+      toast({
+        title: "What-if limit reached",
+        description:
+          "Three hypotheticals at a time — remove one to add another.",
+      });
+      return;
+    }
     const parsed = Number(form.price);
     if (!Number.isFinite(parsed) || parsed < WHAT_IF_MIN_PRICE) {
       toast({
@@ -427,7 +483,7 @@ export function CompareSheet({
     const price = Math.round(parsed / WHAT_IF_PRICE_STEP) * WHAT_IF_PRICE_STEP;
     const sqft = clampWhatIfNumber(form.sqft, 0, WHAT_IF_MAX_SQFT);
     const acreage = clampWhatIfNumber(form.acreage, 0, WHAT_IF_MAX_ACREAGE);
-    const label = form.label.trim() || autoWhatIfLabel(price);
+    const label = form.label.trim() || uniqueAutoWhatIfLabel(price, whatIfs);
     const submarket: ListingSubmarketSummary = {
       slug: market.slug,
       name: market.name,
@@ -439,43 +495,53 @@ export function CompareSheet({
       baselinePrice2026: market.baselinePrice2026,
     };
     const isLand = form.type === "Land Parcel" || sqft === 0;
-    setWhatIf({
-      id: WHAT_IF_ID,
-      submarketId: WHAT_IF_ID,
-      title: label,
-      propertyType: form.type,
-      price,
-      acreage,
-      bedrooms: isLand ? 0 : 3,
-      bathrooms: isLand ? 0 : 2,
-      squareFeet: sqft,
-      zoningCode: "—",
-      description: "",
-      imageUrl: "",
-      featured: false,
-      status: "Hypothesis",
-      createdAt: new Date().toISOString(),
-      submarket,
-    });
+    const id = whatIfId(nextWhatIfSlot(whatIfs));
+    setWhatIfs((prev) => [
+      ...prev,
+      {
+        id,
+        submarketId: id,
+        title: label,
+        propertyType: form.type,
+        price,
+        acreage,
+        bedrooms: isLand ? 0 : 3,
+        bathrooms: isLand ? 0 : 2,
+        squareFeet: sqft,
+        zoningCode: "—",
+        description: "",
+        imageUrl: "",
+        featured: false,
+        status: "Hypothesis",
+        createdAt: new Date().toISOString(),
+        submarket,
+      },
+    ]);
     setEditorOpen(false);
     toast({
-      title: whatIf ? "What-if updated" : "What-if added to sheet",
-      description: `${label} · ${market.name} (${market.state}) — underwritten with the same sheet as the ${starred.length} starred listings.`,
+      title: "What-if added to sheet",
+      description: `${label} · ${market.name} (${market.state}) — ${
+        whatIfs.length + 1
+      } of ${WHAT_IF_MAX} hypotheticals, underwritten with the same sheet as the ${starred.length} starred listings.`,
     });
   };
 
-  const removeWhatIf = () => {
-    setWhatIf(null);
+  const removeWhatIf = (whatIf: PropertyListing) => {
+    setWhatIfs((prev) => prev.filter((w) => w.id !== whatIf.id));
+    const remaining = whatIfs.length - 1;
     toast({
       title: "What-if removed",
-      description:
-        "The hypothetical column was dropped — only live listings remain.",
+      description: `${whatIf.title} was dropped — ${
+        remaining === 0
+          ? "only live listings remain."
+          : `${remaining} hypothetical${remaining === 1 ? "" : "s"} still on the sheet.`
+      }`,
     });
   };
 
-  /** Verdict pick title, tagged when the hypothetical wins a pick. */
+  /** Verdict pick title, tagged when ANY hypothetical wins a pick. */
   const pickTitle = (m: CompareMetrics): string =>
-    m.listing.id === WHAT_IF_ID
+    isWhatIf(m.listing.id)
       ? `${m.listing.title} (what-if)`
       : m.listing.title;
 
@@ -491,7 +557,7 @@ export function CompareSheet({
     const headers: string[] = [
       "Metric",
       ...entries.map((m) =>
-        m.listing.id === WHAT_IF_ID
+        isWhatIf(m.listing.id)
           ? `${m.listing.title} (what-if)`
           : m.listing.title
       ),
@@ -529,6 +595,15 @@ export function CompareSheet({
                   sheet — {SHEET_DOWN_PCT}% down @ {SHEET_RATE}% over {SHEET_TERM}
                   yrs (land: {LAND_DOWN_PCT}% @ {LAND_RATE}%), base rent posture,
                   8% operating reserve. Emerald = best in class.
+                  {whatIfs.length > 0 ? (
+                    /* Subtle amber clause — inline span so the description
+                       reflows without layout-shift risk. */
+                    <span className="text-amber-600 dark:text-amber-300">
+                      {" "}
+                      · +{whatIfs.length} what-if
+                      {whatIfs.length === 1 ? "" : "s"}
+                    </span>
+                  ) : null}
                 </>
               ) : (
                 "Star at least two listings to compare them side-by-side."
@@ -539,11 +614,20 @@ export function CompareSheet({
                 <PopoverTrigger asChild>
                   <button
                     type="button"
-                    title="Underwrite a hypothetical listing at a target price point"
-                    className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-dashed border-amber-400/60 bg-amber-400/[0.04] px-2.5 text-[12px] font-medium text-amber-700 transition-all hover:border-amber-400 hover:bg-amber-400/10 active:scale-[0.97] dark:text-amber-300 dark:hover:bg-amber-400/10"
+                    title={
+                      whatIfs.length >= WHAT_IF_MAX
+                        ? "Three hypotheticals are already on the sheet — remove one to add another"
+                        : "Underwrite a hypothetical listing at a target price point — up to three side by side"
+                    }
+                    className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-dashed border-amber-400/60 bg-amber-400/[0.04] px-2.5 text-[12px] font-medium text-amber-700 transition-all hover:border-amber-400 hover:bg-amber-400/10 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/70 dark:text-amber-300 dark:hover:bg-amber-400/10"
                   >
                     <FlaskConical className="h-3.5 w-3.5" aria-hidden />
-                    {whatIf ? "Edit what-if" : "Add what-if"}
+                    Add what-if
+                    {whatIfs.length > 0 ? (
+                      <span className="rounded-sm bg-amber-400/15 px-1 text-[10.5px] font-bold tabular-nums">
+                        {whatIfs.length}/{WHAT_IF_MAX}
+                      </span>
+                    ) : null}
                   </button>
                 </PopoverTrigger>
                 <PopoverContent
@@ -709,7 +793,10 @@ export function CompareSheet({
                           setForm((f) => ({ ...f, label: e.target.value }))
                         }
                         className="mt-1 h-8 text-[13px]"
-                        placeholder={autoWhatIfLabel(previewWhatIfPrice)}
+                        placeholder={uniqueAutoWhatIfLabel(
+                          previewWhatIfPrice,
+                          whatIfs
+                        )}
                       />
                     </div>
                     <div className="col-span-2 mt-0.5 flex items-center justify-end gap-2">
@@ -760,7 +847,10 @@ export function CompareSheet({
                   <p className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground">
                     Income pick
                   </p>
-                  <p className="mt-0.5 truncate text-[13.5px] font-semibold">
+                  <p
+                    className="mt-0.5 truncate text-[13.5px] font-semibold"
+                    title={bestIncome ? pickTitle(bestIncome) : undefined}
+                  >
                     {bestIncome ? pickTitle(bestIncome) : "No improved listings"}
                   </p>
                   {bestIncome ? (
@@ -785,7 +875,10 @@ export function CompareSheet({
                   <p className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground">
                     Appreciation pick · 2046
                   </p>
-                  <p className="mt-0.5 truncate text-[13.5px] font-semibold">
+                  <p
+                    className="mt-0.5 truncate text-[13.5px] font-semibold"
+                    title={bestEquity ? pickTitle(bestEquity) : undefined}
+                  >
                     {bestEquity ? pickTitle(bestEquity) : "—"}
                   </p>
                   {bestEquity ? (
@@ -818,10 +911,10 @@ export function CompareSheet({
                 {/* Header row: photos + titles */}
                 <div className="sticky left-0 z-10 border-r bg-background/95 backdrop-blur-sm" />
                 {entries.map((m) => {
-                  if (m.listing.id === WHAT_IF_ID) {
+                  if (isWhatIf(m.listing.id)) {
                     return (
                       <div
-                        key={WHAT_IF_ID}
+                        key={m.listing.id}
                         className="relative min-w-0 border-r bg-amber-400/[0.04] last:border-r-0 dark:bg-amber-400/[0.07]"
                       >
                         <div className="flex aspect-[16/10] flex-col items-center justify-center gap-1.5 border-2 border-dashed border-amber-400/50 bg-amber-400/[0.06]">
@@ -835,15 +928,18 @@ export function CompareSheet({
                         </div>
                         <button
                           type="button"
-                          onClick={removeWhatIf}
-                          aria-label="Remove the what-if listing"
-                          title="Remove the what-if listing"
+                          onClick={() => removeWhatIf(m.listing)}
+                          aria-label={`Remove the ${m.listing.title} what-if`}
+                          title={`Remove the ${m.listing.title} what-if`}
                           className="absolute right-1.5 top-1.5 z-10 flex h-6 w-6 items-center justify-center rounded-md border border-amber-400/40 bg-background/90 text-muted-foreground shadow-sm backdrop-blur-sm transition-colors hover:border-rose-400/60 hover:text-rose-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/70 dark:hover:text-rose-400"
                         >
                           <X className="h-3.5 w-3.5" aria-hidden />
                         </button>
                         <div className="p-2.5">
-                          <p className="truncate text-[13px] font-semibold leading-tight">
+                          <p
+                            className="truncate text-[13px] font-semibold leading-tight"
+                            title={m.listing.title}
+                          >
                             {m.listing.title}
                           </p>
                           <p className="mt-0.5 truncate text-[10.5px] font-medium text-amber-600/90 dark:text-amber-300/80">
@@ -883,7 +979,10 @@ export function CompareSheet({
                         />
                       </div>
                       <div className="p-2.5">
-                        <p className="truncate text-[13px] font-semibold leading-tight">
+                        <p
+                          className="truncate text-[13px] font-semibold leading-tight"
+                          title={m.listing.title}
+                        >
                           {m.listing.title}
                         </p>
                         <p className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
@@ -908,7 +1007,7 @@ export function CompareSheet({
                         const isNa = row.na?.(m);
                         const isWin = win && win.listing.id === m.listing.id;
                         const rose = row.negativeRose?.(m);
-                        const isWhatIf = m.listing.id === WHAT_IF_ID;
+                        const hypothetical = isWhatIf(m.listing.id);
                         return (
                           <div
                             key={`${row.key}-${m.listing.id}`}
@@ -921,9 +1020,9 @@ export function CompareSheet({
                                   : rose
                                     ? "text-rose-600 dark:text-rose-400"
                                     : "text-foreground/90",
-                              // Amber wash on the hypothetical column — the
+                              // Amber wash on the hypothetical columns — the
                               // emerald winner highlight takes precedence.
-                              isWhatIf &&
+                              hypothetical &&
                                 !isWin &&
                                 "bg-amber-400/[0.05] dark:bg-amber-400/[0.08]"
                             )}
@@ -948,11 +1047,12 @@ export function CompareSheet({
                   Rent is market-indexed per round 6 — same floor plan pencils
                   differently in Hood River vs Wishram.
                 </p>
-                {whatIf ? (
+                {whatIfs.length > 0 ? (
                   <p className="flex items-center gap-1.5 text-[11.5px] text-amber-700/90 dark:text-amber-300/80">
                     <FlaskConical className="h-3.5 w-3.5 shrink-0 text-amber-500" aria-hidden />
-                    The amber column is a hypothetical entry — underwritten with
-                    the same sheet, not a live listing.
+                    Amber columns are hypothetical entries — up to three at a
+                    time, each underwritten with the same sheet, never live
+                    listings.
                   </p>
                 ) : null}
               </div>

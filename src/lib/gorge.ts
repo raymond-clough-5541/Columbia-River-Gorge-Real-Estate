@@ -335,21 +335,62 @@ export function rentIndex(marketBaseline: number | null | undefined): number {
   return Math.min(1.25, Math.max(0.85, raw));
 }
 
+/** Operating reserve haircut applied to gross rent for NOI: vacancy + maintenance + management. */
+export const RENTAL_RESERVE_RATE = 0.08;
+
+/* ------------------------------------------------------------------ */
+/* Seasonality band for the income lens (round 8-e).                   */
+/*                                                                     */
+/* The Gorge rental market is strongly tourism-shaped: windsurfing,    */
+/* mountain biking and harvest tourism concentrate demand Jun–Sep,     */
+/* while winter tenancy discounts. The band is a corridor-wide         */
+/* heuristic applied on top of the per-market price-tier index —       */
+/* conservative by design and documented in the methodology dialog.    */
+/* ------------------------------------------------------------------ */
+
+export type RentSeasonality = "lean" | "annualized" | "peak";
+
+export const SEASONAL_RENT_BANDS: Record<
+  RentSeasonality,
+  { label: string; mult: number; note: string }
+> = {
+  lean: {
+    label: "Lean",
+    mult: 0.88,
+    note: "winter-weighted tenancy (Nov–Mar)",
+  },
+  annualized: {
+    label: "Annual",
+    mult: 1,
+    note: "full-year blended lease",
+  },
+  peak: {
+    label: "Peak",
+    mult: 1.15,
+    note: "summer STR premium (Jun–Sep), net of shoulder vacancy",
+  },
+};
+
 /**
  * Estimated market rent for a listing, before the investor's own
  * conservative/aggro haircut. Gorge-rate heuristics by product type:
  * single-family leases carry a tourism-adjacent premium, multi-family
  * pencils thinner, and farm estates stack an agricultural ground-lease
- * on the unimproved acreage. The per-sqft base is then scaled by the
- * micro-market's price tier (see rentIndex) so a Hood River lease
- * pencils richer than the same floor plan in Wishram.
+ * on the unimproved acreage. The per-sqft base is scaled by the
+ * micro-market's price tier (see rentIndex) and by the optional
+ * seasonality band (see SEASONAL_RENT_BANDS) so a Hood River lease
+ * pencils richer than the same floor plan in Wishram, and a
+ * peak-tourism posture richer than a winter tenancy.
  */
-export function estimateMarketRent(listing: {
-  propertyType: PropertyType | string;
-  squareFeet: number;
-  acreage: number;
-  submarket?: { baselinePrice2026: number } | null;
-}): { dwelling: number; agriculture: number; note: string; perSqft: number } {
+export function estimateMarketRent(
+  listing: {
+    propertyType: PropertyType | string;
+    squareFeet: number;
+    acreage: number;
+    submarket?: { baselinePrice2026: number } | null;
+  },
+  opts?: { seasonality?: RentSeasonality }
+): { dwelling: number; agriculture: number; note: string; perSqft: number } {
   const sqft = Math.max(0, listing.squareFeet);
   if (listing.propertyType === "Land Parcel" || sqft === 0) {
     return {
@@ -366,7 +407,8 @@ export function estimateMarketRent(listing: {
         ? 1.1
         : 1.35;
   const idx = rentIndex(listing.submarket?.baselinePrice2026);
-  const perSqft = basePerSqft * idx;
+  const season = SEASONAL_RENT_BANDS[opts?.seasonality ?? "annualized"];
+  const perSqft = basePerSqft * idx * season.mult;
   const dwelling = sqft * perSqft;
   const agriculture =
     listing.propertyType === "Luxury Agricultural/Farm Estate" && listing.acreage > 2
@@ -377,16 +419,17 @@ export function estimateMarketRent(listing: {
     idxPct === 0
       ? ""
       : ` (market ${idx > 1 ? "+" : "−"}${idxPct}% ${idx > 1 ? "premium" : "discount"})`;
+  const seasonNote =
+    season.mult === 1 ? "" : ` · ${season.label}: ${season.note}`;
   return {
     dwelling: Math.round(dwelling),
     agriculture: Math.round(agriculture),
     perSqft,
-    note: `$${perSqft.toFixed(2)}/sqft/mo${idxNote}${agriculture > 0 ? " + ag ground-lease" : ""}`,
+    note: `$${perSqft.toFixed(2)}/sqft/mo${idxNote}${seasonNote}${
+      agriculture > 0 ? " + ag ground-lease" : ""
+    }`,
   };
 }
-
-/** Operating reserve haircut applied to gross rent for NOI: vacancy + maintenance + management. */
-export const RENTAL_RESERVE_RATE = 0.08;
 
 export const CAGR_TIER_STYLES: Record<
   CagrTier,

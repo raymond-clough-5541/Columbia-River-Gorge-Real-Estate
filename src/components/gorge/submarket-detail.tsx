@@ -103,7 +103,29 @@ export function SubmarketDetailView({
   const [detailId, setDetailId] = useState<string | null>(null);
   const { toast } = useToast();
 
+  /* Comparables breadcrumb (round 8-d): clicking a peer card stamps the
+   * origin slug right before navigating; the destination profile consumes
+   * the flag ONCE in this lazy initializer and offers a one-click return —
+   * parity with the overview/matrix → projections drilldown back-links.
+   * Hydration-safe: this view only mounts post-hydration under the hash
+   * router's server snapshot (same reasoning as the matrix pins), and the
+   * view remounts per slug (routeKey includes it), so each profile gets a
+   * fresh consume-once read. */
+  const [backToSlug] = useState<string | null>(() => {
+    try {
+      const from = sessionStorage.getItem("crgnsa-submarket-from");
+      sessionStorage.removeItem("crgnsa-submarket-from");
+      if (from && from !== slug) return from;
+    } catch {
+      /* storage unavailable — no back-link */
+    }
+    return null;
+  });
+
   const market = submarkets.find((s) => s.slug === slug);
+  const backToMarket = backToSlug
+    ? (submarkets.find((s) => s.slug === backToSlug) ?? null)
+    : null;
 
   const corridorCagr = useMemo(
     () =>
@@ -159,14 +181,32 @@ export function SubmarketDetailView({
 
   return (
     <div className="mx-auto w-full max-w-7xl px-4 pb-16 pt-8 sm:px-6 lg:px-8">
-      <Button
-        variant="ghost"
-        onClick={() => navigate({ view: "matrix" })}
-        className="mb-6 h-9 gap-2 text-[13px] text-muted-foreground"
-      >
-        <ArrowLeft className="h-4 w-4" aria-hidden />
-        Master Matrix
-      </Button>
+      <div className="mb-6 flex flex-wrap items-center gap-2.5">
+        {/* Comparables return chip — only after a peer jump, consumed once */}
+        {backToMarket ? (
+          <button
+            type="button"
+            onClick={() => navigate({ view: "submarket", slug: backToMarket.slug })}
+            title={`Return to ${backToMarket.name} — the profile you jumped from`}
+            aria-label={`Back to the ${backToMarket.name} profile`}
+            className="group inline-flex h-7 items-center gap-1.5 rounded-md border bg-card px-2.5 text-[12px] font-medium text-muted-foreground shadow-sm transition-all hover:border-emerald-500/50 hover:text-foreground active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60"
+          >
+            <ArrowLeft
+              className="h-3.5 w-3.5 transition-transform group-hover:-translate-x-0.5"
+              aria-hidden
+            />
+            Back to {backToMarket.name}
+          </button>
+        ) : null}
+        <Button
+          variant="ghost"
+          onClick={() => navigate({ view: "matrix" })}
+          className="h-9 gap-2 text-[13px] text-muted-foreground"
+        >
+          <ArrowLeft className="h-4 w-4" aria-hidden />
+          Master Matrix
+        </Button>
+      </div>
 
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -474,7 +514,15 @@ export function SubmarketDetailView({
               <button
                 key={peer.id}
                 type="button"
-                onClick={() => navigate({ view: "submarket", slug: peer.slug })}
+                onClick={() => {
+                  // Breadcrumb flag — lets the peer profile offer "← back".
+                  try {
+                    sessionStorage.setItem("crgnsa-submarket-from", market.slug);
+                  } catch {
+                    /* storage unavailable — no back-link */
+                  }
+                  navigate({ view: "submarket", slug: peer.slug });
+                }}
                 className="group flex flex-col rounded-xl border bg-card p-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-zinc-400 hover:shadow-md dark:hover:border-zinc-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60"
                 aria-label={`Open the ${peer.name}, ${peer.state} profile`}
               >

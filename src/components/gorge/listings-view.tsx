@@ -7,9 +7,11 @@ import {
   BedDouble,
   Building2,
   Camera,
+  Check,
   Database,
   Download,
   Grape,
+  HelpCircle,
   LandPlot,
   Loader2,
   Map as MapIcon,
@@ -23,6 +25,14 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -41,7 +51,14 @@ import {
 import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
-import { toggleWatchlist, useWatchlist, exportWatchlistDoc, parseWatchlistDoc, restoreWatchlist } from "@/lib/watchlist-store";
+import {
+  toggleWatchlist,
+  useWatchlist,
+  exportWatchlistDoc,
+  parseWatchlistDoc,
+  restoreWatchlist,
+  type WatchlistDocument,
+} from "@/lib/watchlist-store";
 import {
   fmtAcres,
   fmtCurrency,
@@ -259,6 +276,15 @@ function timestampFileSuffix(): string {
   )}${p(d.getMinutes())}${p(d.getSeconds())}`;
 }
 
+/** Parsed restore payload awaiting user confirmation in the preview
+ *  dialog. `known` = ids present in this inventory; the rest are shown
+ *  as unknown and get skipped on commit. */
+interface RestorePreview {
+  doc: WatchlistDocument;
+  known: string[];
+  exportedLabel: string;
+}
+
 function WatchlistDataMenu({
   listings,
 }: {
@@ -267,6 +293,7 @@ function WatchlistDataMenu({
   const watchlist = useWatchlist();
   const { toast } = useToast();
   const fileRef = useRef<HTMLInputElement | null>(null);
+  const [preview, setPreview] = useState<RestorePreview | null>(null);
 
   const exportJson = () => {
     if (watchlist.length === 0) {
@@ -310,22 +337,21 @@ function WatchlistDataMenu({
         });
         return;
       }
-      // Ids the current inventory doesn't know (retired listings, other
-      // deployments) are skipped with a note rather than silently dropped.
+      // Nothing is written yet — the preview dialog shows exactly what a
+      // restore would do, and only its confirm button commits (unknown ids
+      // are surfaced there instead of being silently skipped).
       const known = doc.ids.filter((id) =>
         listings.some((l) => l.id === id)
       );
-      const skipped = doc.ids.length - known.length;
-      restoreWatchlist(known);
-      toast({
-        title: known.length > 0 ? "Watchlist restored" : "Nothing to restore",
-        description:
-          known.length > 0
-            ? `${known.length} listing${known.length === 1 ? "" : "s"} re-starred${
-                skipped > 0 ? ` · ${skipped} unknown id${skipped === 1 ? "" : "s"} skipped` : ""
-              }.`
-            : "None of the file's listings match this inventory.",
-      });
+      const exported = new Date(doc.exportedAt);
+      const exportedLabel = Number.isNaN(exported.getTime())
+        ? "unknown date"
+        : exported.toLocaleDateString("en-US", {
+            month: "short",
+            day: "numeric",
+            year: "numeric",
+          });
+      setPreview({ doc, known, exportedLabel });
     };
     reader.onerror = () => {
       toast({
@@ -335,6 +361,25 @@ function WatchlistDataMenu({
       });
     };
     reader.readAsText(file);
+  };
+
+  /** Commit the reviewed restore — replaces the live watchlist with the
+   *  file's known ids. Fires from the dialog's confirm button (event-time
+   *  toast, never inside a state updater). */
+  const confirmRestore = () => {
+    if (!preview) return;
+    const skipped = preview.doc.ids.length - preview.known.length;
+    restoreWatchlist(preview.known);
+    toast({
+      title: preview.known.length > 0 ? "Watchlist restored" : "Nothing to restore",
+      description:
+        preview.known.length > 0
+          ? `${preview.known.length} listing${preview.known.length === 1 ? "" : "s"} re-starred${
+              skipped > 0 ? ` · ${skipped} unknown id${skipped === 1 ? "" : "s"} skipped` : ""
+            }.`
+          : "None of the file's listings match this inventory.",
+    });
+    setPreview(null);
   };
 
   return (
@@ -393,6 +438,116 @@ function WatchlistDataMenu({
           </p>
         </DropdownMenuContent>
       </DropdownMenu>
+
+      {/* Restore preview — review before the file replaces the starred set. */}
+      <Dialog
+        open={preview !== null}
+        onOpenChange={(next) => {
+          if (!next) setPreview(null);
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader className="text-left">
+            <DialogTitle className="flex items-center gap-2 text-[16px]">
+              <Upload className="h-4 w-4 text-emerald-600 dark:text-emerald-400" aria-hidden />
+              Restore watchlist
+            </DialogTitle>
+            <DialogDescription className="text-[12.5px] leading-relaxed">
+              {preview
+                ? `Exported ${preview.exportedLabel} · ${preview.doc.ids.length} listing${
+                    preview.doc.ids.length === 1 ? "" : "s"
+                  } in the file. Restoring replaces your current ${watchlist.length} starred listing${
+                    watchlist.length === 1 ? "" : "s"
+                  } — nothing is written until you confirm.`
+                : ""}
+            </DialogDescription>
+          </DialogHeader>
+
+          {preview ? (
+            <div className="max-h-72 overflow-y-auto rounded-lg border">
+              <ul className="divide-y">
+                {preview.doc.ids.map((id) => {
+                  const listing = listings.find((l) => l.id === id);
+                  return (
+                    <li
+                      key={id}
+                      className="flex min-w-0 items-center gap-2.5 px-3 py-2.5"
+                    >
+                      <span
+                        className={cn(
+                          "flex h-5 w-5 shrink-0 items-center justify-center rounded-full border",
+                          listing
+                            ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                            : "border-zinc-300 bg-muted text-muted-foreground dark:border-zinc-700"
+                        )}
+                        aria-hidden
+                      >
+                        {listing ? (
+                          <Check className="h-3 w-3" />
+                        ) : (
+                          <HelpCircle className="h-3 w-3" />
+                        )}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p
+                          className={cn(
+                            "truncate text-[13px] font-medium leading-tight",
+                            !listing && "text-muted-foreground"
+                          )}
+                        >
+                          {listing ? listing.title : "Unknown listing"}
+                        </p>
+                        <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                          {listing
+                            ? `${listing.submarket?.name ?? "—"} · ${fmtCurrency(
+                                listing.price,
+                                { compact: true }
+                              )}`
+                            : "not in this inventory — will be skipped"}
+                        </p>
+                      </div>
+                      <span
+                        className={cn(
+                          "shrink-0 rounded-sm px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider",
+                          listing
+                            ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                            : "bg-muted text-muted-foreground"
+                        )}
+                      >
+                        {listing ? "restore" : "skip"}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ) : null}
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="ghost"
+              className="h-9 text-[13px]"
+              onClick={() => setPreview(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={!preview || preview.known.length === 0}
+              onClick={confirmRestore}
+              className="h-9 gap-1.5 bg-zinc-900 text-[13px] text-white hover:bg-zinc-800 dark:bg-emerald-500 dark:text-zinc-950 dark:hover:bg-emerald-400"
+            >
+              <Check className="h-3.5 w-3.5" aria-hidden />
+              {preview && preview.known.length > 0
+                ? `Restore ${preview.known.length} listing${
+                    preview.known.length === 1 ? "" : "s"
+                  }`
+                : "Nothing to restore"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

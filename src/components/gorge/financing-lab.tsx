@@ -10,7 +10,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { Calculator, ChevronDown, Info, Landmark, PiggyBank, Scale, Warehouse } from "lucide-react";
+import { Calculator, ChevronDown, Info, Landmark, PiggyBank, Scale, SunSnow, Warehouse } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
 import {
@@ -18,6 +18,8 @@ import {
   PROPERTY_TAX_RATES,
   RENTAL_RESERVE_RATE,
   estimateMarketRent,
+  SEASONAL_RENT_BANDS,
+  type RentSeasonality,
   fmtCurrency,
   fmtPct,
   futureValue,
@@ -43,6 +45,9 @@ const RENT_POSTURES = [
 ] as const;
 type RentPosture = (typeof RENT_POSTURES)[number]["id"];
 
+/** Seasonality band order for the segmented control (round 8-e). */
+const SEASON_ORDER: RentSeasonality[] = ["lean", "annualized", "peak"];
+
 export function FinancingLab({ listing }: { listing: PropertyListing }) {
   const isLand = listing.squareFeet === 0;
   const defaultDown = isLand ? 35 : 20;
@@ -52,11 +57,12 @@ export function FinancingLab({ listing }: { listing: PropertyListing }) {
   const [term, setTerm] = useState<(typeof TERMS)[number]>(30);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [posture, setPosture] = useState<RentPosture>("base");
+  const [seasonality, setSeasonality] = useState<RentSeasonality>("annualized");
 
   const state = listing.submarket?.state ?? "OR";
   const baseRent = useMemo(
-    () => estimateMarketRent(listing),
-    [listing]
+    () => estimateMarketRent(listing, { seasonality }),
+    [listing, seasonality]
   );
   const postureMult =
     RENT_POSTURES.find((p) => p.id === posture)?.mult ?? 1;
@@ -148,6 +154,8 @@ export function FinancingLab({ listing }: { listing: PropertyListing }) {
       },
     };
   }, [listing, listing.price, listing.submarket?.projectedCagr, downPct, rate, term, state, isLand, baseRent, postureMult]);
+
+  const activeSeason = SEASONAL_RENT_BANDS[seasonality];
 
   return (
     <div className="rounded-lg border bg-background p-4">
@@ -281,36 +289,86 @@ export function FinancingLab({ listing }: { listing: PropertyListing }) {
       {/* Income lens — rental stress-test */}
       {!isLand ? (
         <div className="mt-3 rounded-lg border bg-card p-3.5">
-          <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
             <div className="flex items-center gap-2">
               <Warehouse className="h-4 w-4 text-muted-foreground" aria-hidden />
               <MicroLabel>Income Lens · Rental Stress-Test</MicroLabel>
             </div>
-            <div
-              role="radiogroup"
-              aria-label="Rent posture"
-              className="flex rounded-md border bg-background p-0.5"
-            >
-              {RENT_POSTURES.map((p) => (
-                <button
-                  key={p.id}
-                  type="button"
-                  role="radio"
-                  aria-checked={posture === p.id}
-                  onClick={() => setPosture(p.id)}
-                  title={`Market rent × ${p.mult.toFixed(2)}`}
-                  className={cn(
-                    "h-6 rounded px-2 text-[11px] font-semibold transition-all active:scale-[0.97]",
-                    posture === p.id
-                      ? "bg-zinc-900 text-white dark:bg-emerald-500 dark:text-zinc-950"
-                      : "text-muted-foreground hover:text-foreground"
-                  )}
+            <div className="flex flex-wrap items-center gap-2.5">
+              {/* Seasonality band (round 8-e) — tourism-shaped demand */}
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Season
+                </span>
+                <div
+                  role="radiogroup"
+                  aria-label="Rent seasonality band"
+                  className="flex rounded-md border bg-background p-0.5"
                 >
-                  {p.label}
-                </button>
-              ))}
+                  {SEASON_ORDER.map((id) => {
+                    const band = SEASONAL_RENT_BANDS[id];
+                    const active = seasonality === id;
+                    return (
+                      <button
+                        key={id}
+                        type="button"
+                        role="radio"
+                        aria-checked={active}
+                        onClick={() => setSeasonality(id)}
+                        title={`${band.note} · rent × ${band.mult.toFixed(2)}`}
+                        className={cn(
+                          "h-6 rounded px-2 text-[11px] font-semibold transition-all active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60",
+                          active
+                            ? "bg-zinc-900 text-white dark:bg-emerald-500 dark:text-zinc-950"
+                            : "text-muted-foreground hover:text-foreground"
+                        )}
+                      >
+                        {band.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              {/* Investor posture on top of the market heuristic */}
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Posture
+                </span>
+                <div
+                  role="radiogroup"
+                  aria-label="Rent posture"
+                  className="flex rounded-md border bg-background p-0.5"
+                >
+                  {RENT_POSTURES.map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={posture === p.id}
+                      onClick={() => setPosture(p.id)}
+                      title={`Market rent × ${p.mult.toFixed(2)}`}
+                      className={cn(
+                        "h-6 rounded px-2 text-[11px] font-semibold transition-all active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60",
+                        posture === p.id
+                          ? "bg-zinc-900 text-white dark:bg-emerald-500 dark:text-zinc-950"
+                          : "text-muted-foreground hover:text-foreground"
+                      )}
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
+
+          {seasonality !== "annualized" ? (
+            <p className="mt-2 text-[10.5px] leading-snug text-muted-foreground">
+              <SunSnow className="mr-1 inline h-3 w-3 align-[-1px]" aria-hidden />
+              {activeSeason.label} band — {activeSeason.note} (rent ×{" "}
+              {activeSeason.mult.toFixed(2)}).
+            </p>
+          ) : null}
 
           <div className="mt-2.5 flex items-baseline justify-between gap-3 border-b border-border/60 pb-2.5">
             <span className="text-[12px] text-muted-foreground">

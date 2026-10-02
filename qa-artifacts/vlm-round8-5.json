@@ -1,0 +1,28 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "**UI QA Audit: Restore Watchlist Preview Dialog**\n\n1.  **PASS.** The list is highly scannable; status icons (check/circle) are perfectly aligned with titles, and the market/price sublines provide clear context. The \"RESTORE\" and \"SKIP\" action chips are right-aligned, creating a clean vertical rhythm that allows for rapid visual processing of each inventory item.\n\n2.  **PASS.** The header uses a clear icon + bold title hierarchy, and the description text effectively communicates the \"preview\" state (nothing written until confirmed). The footer buttons utilize high-contrast emerald for the primary action and a subtle border for the secondary action, ensuring the user's focus remains on the confirmation.\n\n3.  **PASS.** Text truncation is handled gracefully on long titles (e.g., \"GMA Luxury Farm...\") without breaking the layout. There is no overlap between elements, and the contrast between the white text/icons and the dark slate background (and the emerald accents) meets accessibility standards for legibility.\n\n4.  **PASS.** Overall polish is excellent; the consistent use of the emerald brand color for active states, the professional spacing within the modal, and the clear differentiation between \"known\" and \"unknown\" listings create a trustworthy, high-end financial analytics user experience.",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": 1790919063,
+  "id": "20261002133058a506b349d25346d0",
+  "model": "glm-5v-turbo",
+  "object": "chat.completion",
+  "request_id": "20261002133058a506b349d25346d0",
+  "usage": {
+    "completion_tokens": 271,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "prompt_tokens": 1010,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "total_tokens": 1281
+  }
+}

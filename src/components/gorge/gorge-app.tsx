@@ -12,6 +12,7 @@ import { ProjectionsView } from "./projections";
 import { ListingsView } from "./listings-view";
 import { SubmarketDetailView } from "./submarket-detail";
 import { KeyboardShortcuts } from "./shortcuts";
+import { CommandPalette } from "./command-palette";
 
 /* ---------------------------------------------------------------- */
 /* Hash-based SPA router — keeps the whole experience on the `/`      */
@@ -138,6 +139,7 @@ function BackToTop() {
 export function GorgeApp({ submarkets, listings, stats }: GorgeAppProps) {
   const route = useSyncExternalStore(subscribeHash, getHashRoute, () => SERVER_ROUTE);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
 
   useEffect(() => {
     // Normalize an empty hash to "#/" once on mount.
@@ -164,11 +166,19 @@ export function GorgeApp({ submarkets, listings, stats }: GorgeAppProps) {
       <SiteHeader
         route={route}
         onOpenShortcuts={() => setShortcutsOpen(true)}
+        onOpenPalette={() => setPaletteOpen(true)}
       />
       <KeyboardShortcuts
         navigate={navigate}
         helpOpen={shortcutsOpen}
         onHelpOpenChange={setShortcutsOpen}
+      />
+      <CommandPalette
+        open={paletteOpen}
+        onOpenChange={setPaletteOpen}
+        navigate={navigate}
+        submarkets={submarkets}
+        onOpenShortcuts={() => setShortcutsOpen(true)}
       />
       <main className="flex-1">
         <AnimatePresence mode="wait">

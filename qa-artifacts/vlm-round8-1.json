@@ -1,0 +1,28 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "**UI QA AUDIT REPORT: GORGE CAPITAL INTELLIGENCE (Columbia River Corridor)**\n\n1.  **PASS.** The OR/WA live-reserve split bar is rendered cleanly with distinct, proportional segments (slate/orange for OR, emerald for WA) and legible \"ac\" captions aligned correctly to the bar's edges.\n2.  **PASS.** KPI tiles and the depletion timeline container exhibit consistent internal padding, uniform font weights for labels, and a cohesive typographic hierarchy across the dark-mode interface.\n3.  **PASS.** No text truncation, element overlap, or visual clipping is detected; the \"11 of 11 past exhaustion\" badge and timeline ticks are well-spaced within their containers.\n4.  **PASS.** The overall visual quality is high, featuring a professional slate/zinc + emerald palette with clear data visualization and intuitive UI controls.",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": 1790918987,
+  "id": "202610021329431dcf2479c5884809",
+  "model": "glm-5v-turbo",
+  "object": "chat.completion",
+  "request_id": "202610021329431dcf2479c5884809",
+  "usage": {
+    "completion_tokens": 189,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "prompt_tokens": 1033,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "total_tokens": 1222
+  }
+}

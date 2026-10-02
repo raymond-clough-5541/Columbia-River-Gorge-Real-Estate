@@ -3,7 +3,7 @@
 import { useState, useSyncExternalStore } from "react";
 import { useTheme } from "next-themes";
 import { motion } from "framer-motion";
-import { Keyboard, Menu, Moon, Mountain, Sun, X } from "lucide-react";
+import { Keyboard, Menu, Moon, Mountain, Search, Sun, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Route } from "./gorge-app";
 
@@ -49,9 +49,11 @@ function ThemeToggle() {
 export function SiteHeader({
   route,
   onOpenShortcuts,
+  onOpenPalette,
 }: {
   route: Route;
   onOpenShortcuts: () => void;
+  onOpenPalette: () => void;
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -107,6 +109,21 @@ export function SiteHeader({
         </nav>
 
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            aria-label="Open the command palette"
+            title="Search anything (⌘K)"
+            onClick={onOpenPalette}
+            className="group/palette flex h-9 items-center gap-2 rounded-lg border bg-card pl-2.5 pr-2 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60"
+          >
+            <Search className="h-4 w-4" aria-hidden />
+            <span className="hidden text-[12px] font-medium lg:inline">
+              Search markets…
+            </span>
+            <kbd className="hidden rounded border bg-muted px-1.5 py-0.5 font-mono text-[10.5px] font-semibold sm:inline">
+              ⌘K
+            </kbd>
+          </button>
           <button
             type="button"
             aria-label="Keyboard shortcuts"

@@ -238,6 +238,11 @@ export function KeyboardShortcuts({
                 label: "Focus listing search",
               },
               {
+                icon: Search,
+                keys: ["⌘K"],
+                label: "Command palette — jump to any market or workspace",
+              },
+              {
                 icon: resolvedTheme === "dark" ? Sun : Moon,
                 keys: ["t"],
                 label: "Toggle dark / light theme",
