@@ -245,7 +245,11 @@ export function GorgeApp({
               />
             ) : null}
             {route.view === "regions" ? (
-              <RegionsView regions={regions} navigate={navigate} />
+              <RegionsView
+                regions={regions}
+                submarkets={submarkets}
+                navigate={navigate}
+              />
             ) : null}
           </motion.div>
         </AnimatePresence>

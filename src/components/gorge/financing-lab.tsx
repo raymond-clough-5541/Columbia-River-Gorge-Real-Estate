@@ -10,7 +10,18 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { Calculator, ChevronDown, Coins, Info, Landmark, PiggyBank, Scale, SunSnow, Warehouse } from "lucide-react";
+import {
+  Calculator,
+  ChevronDown,
+  Coins,
+  Info,
+  Landmark,
+  PiggyBank,
+  Printer,
+  Scale,
+  SunSnow,
+  Warehouse,
+} from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
 import {
@@ -577,10 +588,14 @@ export function FinancingLab({ listing }: { listing: PropertyListing }) {
         ) : null}
       </div>
 
-      {/* Amortization schedule — collapsible deep dive */}
+      {/* Amortization schedule — collapsible deep dive. Round 14 adds the
+          print dossier affordance: the schedule prints with repeated header
+          rows, zebra scan guides, and a print-only context block carrying the
+          note posture so the table is self-contained on paper. */}
       <div className="mt-3 overflow-hidden rounded-lg border bg-card">
         <button
           type="button"
+          data-print="hide"
           onClick={() => setScheduleOpen((v) => !v)}
           aria-expanded={scheduleOpen}
           className="flex w-full items-center justify-between gap-3 px-3.5 py-3 text-left transition-colors hover:bg-accent/50"
@@ -596,6 +611,28 @@ export function FinancingLab({ listing }: { listing: PropertyListing }) {
               {calc.halfLifeYear !== null
                 ? `balance crosses 50% of note in ${calc.halfLifeYear}`
                 : `${term}-yr note`}
+            </span>
+            <span
+              role="button"
+              tabIndex={0}
+              aria-label="Print the dossier with the amortization schedule expanded"
+              onClick={(e) => {
+                e.stopPropagation();
+                setScheduleOpen(true);
+                window.setTimeout(() => window.print(), 200);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setScheduleOpen(true);
+                  window.setTimeout(() => window.print(), 200);
+                }
+              }}
+              className="inline-flex h-6.5 items-center gap-1.5 rounded-md border bg-background px-2 text-[11px] font-semibold text-muted-foreground transition-colors hover:border-zinc-400 hover:text-foreground active:scale-[0.97] dark:hover:border-zinc-600"
+            >
+              <Printer className="h-3 w-3" aria-hidden />
+              Print schedule
             </span>
             <ChevronDown
               className={cn(
@@ -712,8 +749,32 @@ export function FinancingLab({ listing }: { listing: PropertyListing }) {
               </span>
             </p>
 
+            {/* Round 14 — print-only context block: the schedule table must be
+                self-contained on paper (which note, which posture, when
+                generated). Never renders on screen. */}
+            <div className="hidden print:block">
+              <p className="text-[13px] font-semibold leading-snug">
+                Amortization schedule — {listing.title}
+              </p>
+              <p className="mt-0.5 text-[10.5px] text-muted-foreground">
+                {listing.submarket?.name ?? "Unassigned market"}
+                {listing.submarket ? ` · ${listing.submarket.state}` : ""} ·{" "}
+                {fmtCurrency(listing.price)} purchase · {downPct}% down ·{" "}
+                {fmtPct(rate)} · {term}-yr note · market CAGR{" "}
+                {fmtPct(calc.cagr)} · generated{" "}
+                {new Date().toLocaleDateString("en-US", {
+                  year: "numeric",
+                  month: "short",
+                  day: "numeric",
+                })}
+              </p>
+            </div>
+
             {/* Yearly table — the 2026$ lens adds the deflated value column */}
-            <div className="thin-scroll mt-3 max-h-64 overflow-auto rounded-md border">
+            <div
+              data-print="schedule"
+              className="thin-scroll mt-3 max-h-64 overflow-auto rounded-md border print:mt-2 print:overflow-visible"
+            >
               <table className="w-full text-[12px]">
                 <thead className="sticky top-0 z-10 bg-muted/95 backdrop-blur-sm">
                   <tr className="text-[10.5px] uppercase tracking-wider text-muted-foreground">

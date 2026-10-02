@@ -1,0 +1,28 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "1) Header row with column labels visible? **PASS** – The header row (YEAR, PRINCIPAL, INTEREST, CUM. INTEREST, BALANCE) is clearly visible at the top of the table on the second page.\n2) Zebra/alternating row shading? **PASS** – The table rows use a clear alternating white and light-gray background for readability.\n3) A context block above the table naming the property + note posture? **PASS** – The first page contains a bold title block naming the \"GMA Luxury Farm & Vineyard Estate\" along with purchase price, down payment, rate, and term details.\n4) All rows fully legible, nothing clipped? **PASS** – Every row from 2027 through 2056 is fully legible with no text or numbers clipped or cut off.",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": 1790928806,
+  "id": "202610021613214e23a6ea37eb410b",
+  "model": "glm-5v-turbo",
+  "object": "chat.completion",
+  "request_id": "202610021613214e23a6ea37eb410b",
+  "usage": {
+    "completion_tokens": 172,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "prompt_tokens": 2422,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "total_tokens": 2594
+  }
+}

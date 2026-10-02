@@ -348,4 +348,38 @@ html {
   [class*="bg-zinc-950"] {
     background: white !important;
   }
+
+  /* ---- Round 14: amortization-schedule print layout -------------------- */
+
+  /* The generic `.sticky { display: none }` chrome-hide above also kills any
+     table header row that uses `sticky` for on-screen scrolling (the
+     financing schedule's thead among them) — a printed schedule with no
+     column headers is unreadable. Specificity (0,1,2) beats `.sticky`
+     (0,1,0), so this rescue wins while app chrome stays hidden. */
+  table thead.sticky {
+    display: table-header-group !important;
+    position: static !important;
+    top: auto !important;
+    z-index: auto !important;
+    backdrop-filter: none !important;
+  }
+
+  /* Repeat table headers on every printed page the table spans. */
+  thead {
+    display: table-header-group;
+  }
+
+  /* Zebra striping + paper-true colors for the financing schedule table —
+     30 rows of tabular numbers need scan guides on paper. Scoped to the
+     [data-print="schedule"] wrapper so other tables print untouched. */
+  [data-print="schedule"] table {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  [data-print="schedule"] tbody tr:nth-child(even) {
+    background: oklch(0.972 0 0) !important;
+  }
+  [data-print="schedule"] tbody tr {
+    break-inside: avoid;
+  }
 }

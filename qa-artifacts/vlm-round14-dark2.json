@@ -1,0 +1,28 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "1) **PASS** – The emerald line, gradient fill, year ticks (2026–2046), amber dashed marker with flame icon, and terminal dot are all clearly legible and well-contrasted against the dark background.\n2) **PASS** – All text and UI elements use light/colored text on dark backgrounds; no black-on-dark or invisible elements are present.\n3) **PASS** – The chart block is cleanly laid out with proper spacing; there is no overlap, clipping, or truncation of the chart components, labels, or annotations.",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": 1790928904,
+  "id": "2026100216150118eb34517c09407a",
+  "model": "glm-5v-turbo",
+  "object": "chat.completion",
+  "request_id": "2026100216150118eb34517c09407a",
+  "usage": {
+    "completion_tokens": 117,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "prompt_tokens": 1349,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "total_tokens": 1466
+  }
+}

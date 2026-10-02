@@ -1,0 +1,28 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "1) **FAIL** – The 'Corridor composite' mini-chart (emerald curve, 2026-2046 ticks, amber dashed marker) is **not present** in the provided screenshot; the image displays a text-based dashboard with KPI cards and a feature list instead of the requested chart.\n2) **PASS** – All text and UI elements use light/white or muted gray colors that are clearly legible against the dark background; no black-on-dark or invisible elements were detected.\n3) **PASS** – The layout is clean and well-structured with no visible overlap, clipping, or misalignment of cards, icons, or text blocks.",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": 1790928892,
+  "id": "20261002161449c641dc7540874e65",
+  "model": "glm-5v-turbo",
+  "object": "chat.completion",
+  "request_id": "20261002161449c641dc7540874e65",
+  "usage": {
+    "completion_tokens": 135,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "prompt_tokens": 1340,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "total_tokens": 1475
+  }
+}

@@ -41,6 +41,9 @@ export interface Submarket {
   mapX: number;
   mapY: number;
   listingCount?: number;
+  /** Round 13 — expansion-registry FK (nullable: unattached rows are
+   *  corridor-era legacy or not yet assigned to a region). */
+  regionId?: string | null;
 }
 
 export interface ListingSubmarketSummary {

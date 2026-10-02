@@ -1,0 +1,28 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "1) FAIL - The document contains financial summaries and metrics but lacks a detailed amortization schedule table with the specified column headers.\n2) FAIL - No amortization schedule table with rows or zebra shading is present in the provided pages.\n3) PASS - The \"FINANCING LAB\" section clearly identifies the property context, including a 20% down payment ($970k), a 6.50% APR rate, and a 20-year term.\n4) PASS - All text is fully legible and properly formatted without any clipping or overlapping elements.",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": 1790928784,
+  "id": "20261002161302e8399e98e9284483",
+  "model": "glm-5v-turbo",
+  "object": "chat.completion",
+  "request_id": "20261002161302e8399e98e9284483",
+  "usage": {
+    "completion_tokens": 114,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "prompt_tokens": 1649,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "total_tokens": 1763
+  }
+}

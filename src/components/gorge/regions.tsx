@@ -8,6 +8,7 @@ import {
   Database,
   Download,
   Flag,
+  Flame,
   FlaskConical,
   Globe2,
   Landmark,
@@ -15,6 +16,7 @@ import {
   MapPin,
   Scale,
   ShieldCheck,
+  TrendingUp,
 } from "lucide-react";
 import {
   Sheet,
@@ -34,11 +36,13 @@ import {
   fmtAcres,
   fmtCurrency,
   fmtPct,
+  futureValueDepletionAdjusted,
   REGION_STATUS_STYLES,
   REGION_WAVES,
   type Region,
   type RegionStatus,
   type RegionWave,
+  type Submarket,
 } from "@/lib/gorge";
 import { MicroLabel, SectionHeader, StatCard } from "./shared";
 import type { NavigateFn } from "./gorge-app";
@@ -137,9 +141,11 @@ function CountryChip({ country }: { country: string }) {
 
 export function RegionsView({
   regions,
+  submarkets,
   navigate,
 }: {
   regions: Region[];
+  submarkets: Submarket[];
   navigate: NavigateFn;
 }) {
   const { toast } = useToast();
@@ -360,6 +366,7 @@ export function RegionsView({
                   <LiveRegionCard
                     key={region.slug}
                     region={region}
+                    submarkets={submarkets}
                     navigate={navigate}
                   />
                 ) : (
@@ -633,12 +640,56 @@ function RegionCard({
 
 function LiveRegionCard({
   region,
+  submarkets,
   navigate,
 }: {
   region: Region;
+  submarkets: Submarket[];
   navigate: NavigateFn;
 }) {
   const agg = region.aggregate;
+
+  /* Round 14 — the corridor composite: every attached market indexed to
+   *  100 at 2026, compounding at its own CAGR until its raw-land
+   *  depletion year, then cooling to the 2.5% replacement rate. The
+   *  average across markets is the region's honest growth curve — the
+   *  bend where the corridor's raw land runs out is visible in the line. */
+  const markets = useMemo(
+    () => submarkets.filter((s) => s.regionId === region.id),
+    [submarkets, region.id]
+  );
+  const composite = useMemo(() => {
+    if (markets.length === 0) return null;
+    const pts = Array.from({ length: 21 }, (_, t) =>
+      markets.reduce(
+        (a, m) =>
+          a +
+          futureValueDepletionAdjusted(100, m.projectedCagr, t, m.depletionYear) /
+            markets.length,
+        0
+      )
+    );
+    // Net-buildable-weighted average depletion year — the blended
+    // exhaustion milestone for the region.
+    const weight = markets.reduce(
+      (a, m) => a + (m.netBuildableAcresMin + m.netBuildableAcresMax) / 2,
+      0
+    );
+    const depletionYear =
+      weight > 0
+        ? Math.round(
+            markets.reduce(
+              (a, m) =>
+                a +
+                (m.depletionYear *
+                  (m.netBuildableAcresMin + m.netBuildableAcresMax)) /
+                  2,
+              0
+            ) / weight
+          )
+        : null;
+    return { pts, depletionYear, terminalMultiple: pts[20] / 100 };
+  }, [markets]);
   return (
     <div className="relative overflow-hidden rounded-xl border border-emerald-500/35 bg-card p-5 shadow-sm transition-shadow hover:shadow-md sm:col-span-2 lg:col-span-3">
       <div
@@ -700,6 +751,133 @@ function LiveRegionCard({
           ))}
         </div>
       ) : null}
+
+      {/* Round 14 — corridor composite curve: every attached market indexed
+          to 100 at 2026, compounding at its own CAGR until its depletion
+          year, then cooling to the 2.5% replacement rate. The bend in the
+          line IS the scarcity story — raw land runs out mid-horizon. */}
+      {composite ? <CompositeCurve composite={composite} /> : null}
+    </div>
+  );
+}
+
+function CompositeCurve({
+  composite,
+}: {
+  composite: {
+    pts: number[];
+    depletionYear: number | null;
+    terminalMultiple: number;
+  };
+}) {
+  const { pts, depletionYear, terminalMultiple } = composite;
+  const W = 600;
+  const H = 52;
+  const PAD = 3;
+  const hi = Math.max(...pts);
+  const xOf = (t: number) => (t / 20) * W;
+  const yOf = (v: number) => PAD + (H - PAD * 2) * (1 - v / hi);
+  const line = `M${pts.map((v, t) => `${xOf(t).toFixed(1)},${yOf(v).toFixed(1)}`).join(" L")}`;
+  const area = `${line} L${W},${H} L0,${H} Z`;
+
+  return (
+    <div className="mt-4 rounded-lg border bg-background/70 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+        <p className="flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground">
+          <TrendingUp
+            className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400"
+            aria-hidden
+          />
+          Corridor composite · depletion-adjusted
+        </p>
+        <p className="text-[10.5px] text-muted-foreground tabular-nums">
+          $100 of 2026 corridor paper →{" "}
+          <span className="font-semibold text-emerald-600 dark:text-emerald-400">
+            ${Math.round(terminalMultiple * 100)}
+          </span>{" "}
+          by 2046 ({terminalMultiple.toFixed(2)}×)
+        </p>
+      </div>
+      <div
+        role="img"
+        aria-label={`Corridor composite index, 2026 to 2046: $100 compounds to $${Math.round(
+          terminalMultiple * 100
+        )} at the blended depletion-adjusted rate${
+          depletionYear !== null
+            ? `, bending at the ~${depletionYear} blended raw-land depletion year`
+            : ""
+        }.`}
+        className="relative mt-2 h-[52px]"
+      >
+        <svg
+          viewBox={`0 0 ${W} ${H}`}
+          preserveAspectRatio="none"
+          className="absolute inset-0 h-full w-full"
+          aria-hidden
+        >
+          <defs>
+            <linearGradient id="region-composite-grad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#10b981" stopOpacity={0.2} />
+              <stop offset="100%" stopColor="#10b981" stopOpacity={0.03} />
+            </linearGradient>
+          </defs>
+          <path d={area} fill="url(#region-composite-grad)" />
+          <path
+            d={line}
+            fill="none"
+            stroke="#10b981"
+            strokeWidth={2.25}
+            strokeLinecap="round"
+            vectorEffect="non-scaling-stroke"
+          />
+        </svg>
+        <span
+          className="pointer-events-none absolute h-[7px] w-[7px] -translate-y-1/2 translate-x-[-3.5px] rounded-full bg-emerald-500 ring-2 ring-background"
+          style={{
+            left: "100%",
+            top: `${(yOf(pts[20]) / H) * 100}%`,
+          }}
+          aria-hidden
+        />
+        {depletionYear !== null
+          ? (() => {
+              const t = Math.min(20, Math.max(1, depletionYear - 2026));
+              const leftPct = (t / 20) * 100;
+              return (
+                <div
+                  className="pointer-events-none absolute inset-y-0"
+                  style={{ left: `${leftPct}%` }}
+                  aria-hidden
+                >
+                  <div className="h-full border-l border-dashed border-amber-500/55" />
+                  <span
+                    className="absolute bottom-0.5 flex -translate-x-1/2 items-center gap-0.5 whitespace-nowrap text-[9px] font-semibold text-amber-700 dark:text-amber-400"
+                    style={{
+                      left: 0,
+                      transform: `translateX(${
+                        leftPct < 10 ? -leftPct + 4 : leftPct > 90 ? -(leftPct - 96) : -50
+                      }%)`,
+                    }}
+                  >
+                    <Flame className="h-2.5 w-2.5" aria-hidden />
+                    raw-land ~{depletionYear}
+                  </span>
+                </div>
+              );
+            })()
+          : null}
+      </div>
+      <div className="mt-1.5 flex justify-between text-[9.5px] font-medium tabular-nums text-muted-foreground">
+        {[2026, 2031, 2036, 2041, 2046].map((y) => (
+          <span key={y}>{y}</span>
+        ))}
+      </div>
+      <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground">
+        Each market compounds at its own CAGR until its raw-land depletion
+        year, then cools to the 2.5% post-depletion replacement rate — the
+        average across the corridor&apos;s markets is the honest blended
+        curve, not one blanket rate.
+      </p>
     </div>
   );
 }

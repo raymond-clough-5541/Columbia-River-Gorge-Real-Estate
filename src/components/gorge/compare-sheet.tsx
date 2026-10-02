@@ -7,6 +7,7 @@ import {
   Coins,
   Crown,
   Download,
+  Flame,
   FlaskConical,
   GitCompareArrows,
   Info,
@@ -425,6 +426,9 @@ export function CompareSheet({
    *  and carry rows are already current-year figures, so they stay put
    *  (noted in the footer while the lens is on). */
   const [realTerms, setRealTerms] = useState(false);
+  /** Round 14 — pointer/keyboard-tracked year index (0..20) on the
+   *  portfolio equity-runway chart; null when not hovered/focused. */
+  const [runwayYear, setRunwayYear] = useState<number | null>(null);
   const [form, setForm] = useState<WhatIfForm>({
     price: "",
     type: "Single-Family",
@@ -497,6 +501,51 @@ export function CompareSheet({
     );
     const fvTotal = displayEntries.reduce((a, m) => a + m.fv2046, 0);
     const equity = fvTotal - remainingDebt;
+    /* Round 14 — the equity-runway series: the aggregate value path (riding
+     * the display layer, so the 2026$ lens deflates it), the aggregate
+     * amortizing balance, and the wedge between them. 21 points, 2026→2046. */
+    const series = Array.from({ length: 21 }, (_, t) => {
+      const value = entries.reduce(
+        (a, m) =>
+          a +
+          (realTerms
+            ? realValue(
+                futureValue(m.listing.price, m.listing.submarket?.projectedCagr ?? 5, t),
+                SHEET_INFLATION,
+                t
+              )
+            : futureValue(m.listing.price, m.listing.submarket?.projectedCagr ?? 5, t)),
+        0
+      );
+      const debt = entries.reduce(
+        (a, m) =>
+          a +
+          remainingBalance(
+            m.loan,
+            m.isLand ? LAND_RATE : SHEET_RATE,
+            SHEET_TERM,
+            t * 12
+          ),
+        0
+      );
+      return { year: 2026 + t, value, debt, equity: value - debt };
+    });
+    // Price-weighted average depletion year across entries attached to a
+    // submarket — the blended raw-land exhaustion milestone for the mix.
+    const depletionWeight = entries.reduce(
+      (a, m) => a + (m.listing.submarket?.depletionYear ? m.listing.price : 0),
+      0
+    );
+    const depletionYear =
+      depletionWeight > 0
+        ? Math.round(
+            entries.reduce(
+              (a, m) =>
+                a + (m.listing.submarket?.depletionYear ?? 0) * m.listing.price,
+              0
+            ) / depletionWeight
+          )
+        : null;
     return {
       count: entries.length,
       landCount,
@@ -509,8 +558,10 @@ export function CompareSheet({
       equity,
       leverage: totalDown > 0 ? equity / totalDown : 0,
       blendedMultiple: totalPrice > 0 ? fvTotal / totalPrice : 0,
+      series,
+      depletionYear,
     };
-  }, [entries, displayEntries]);
+  }, [entries, displayEntries, realTerms]);
 
   const bestIncome = useMemo(() => {
     const improved = entries.filter((m) => !m.isLand);
@@ -1321,6 +1372,19 @@ export function CompareSheet({
                     </div>
                   </div>
                 </div>
+
+                {/* Round 14 — portfolio equity-runway chart. The aggregate
+                    value path compounds at each market's own CAGR while the
+                    per-entry notes amortize at their own postures; the wedge
+                    between the curves is the equity build. Pointer- AND
+                    keyboard-tracked (←/→ step years when focused). */}
+                <PortfolioRunwayChart
+                  series={portfolio.series}
+                  depletionYear={portfolio.depletionYear}
+                  realTerms={realTerms}
+                  hoverT={runwayYear}
+                  onHoverT={setRunwayYear}
+                />
               </div>
             ) : null}
 
@@ -1613,5 +1677,246 @@ export function CompareTrigger({
         submarkets={submarkets}
       />
     </>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Portfolio equity-runway chart (round 14) — the aggregate value      */
+/* path vs the aggregate amortizing balance, 2026→2046. The emerald    */
+/* wedge between the curves is the equity build across the whole      */
+/* shortlist. Pointer-tracked (crosshair) AND keyboard-tracked        */
+/* (focus + ←/→ step years). The value path rides the real-terms      */
+/* display layer; the debt path is contractual/nominal either way.    */
+/* ------------------------------------------------------------------ */
+
+interface RunwayPoint {
+  year: number;
+  value: number;
+  debt: number;
+  equity: number;
+}
+
+const RUNWAY_W = 600;
+const RUNWAY_H = 76;
+const RUNWAY_PAD = 3;
+
+function PortfolioRunwayChart({
+  series,
+  depletionYear,
+  realTerms,
+  hoverT,
+  onHoverT,
+}: {
+  series: RunwayPoint[];
+  depletionYear: number | null;
+  realTerms: boolean;
+  hoverT: number | null;
+  onHoverT: (t: number | null) => void;
+}) {
+  const hi = Math.max(...series.map((p) => p.value), 1);
+  const xOf = (t: number) => (t / 20) * RUNWAY_W;
+  const yOf = (v: number) =>
+    RUNWAY_PAD +
+    (RUNWAY_H - RUNWAY_PAD * 2) * (1 - Math.min(v, hi) / hi);
+
+  const valuePts = series.map((p, t) => `${xOf(t).toFixed(1)},${yOf(p.value).toFixed(1)}`);
+  const debtPts = series.map((p, t) => `${xOf(t).toFixed(1)},${yOf(p.debt).toFixed(1)}`);
+  const valueLine = `M${valuePts.join(" L")}`;
+  const debtLine = `M${debtPts.join(" L")}`;
+  // The equity wedge: value path left→right, then debt path right→left.
+  const wedge = `M${valuePts.join(" L")} L${[...debtPts].reverse().join(" L")} Z`;
+
+  const terminal = series[20];
+  const start = series[0];
+  const hover = hoverT !== null ? series[hoverT] : null;
+  const checkpoints = [0, 5, 10, 15, 20]
+    .map((t) => `${series[t].year}: ${fmtCurrency(Math.round(series[t].equity), { compact: true })}`)
+    .join("; ");
+
+  const trackFromEvent = (clientX: number, el: HTMLElement) => {
+    const rect = el.getBoundingClientRect();
+    const frac = (clientX - rect.left) / Math.max(1, rect.width);
+    onHoverT(Math.min(20, Math.max(0, Math.round(frac * 20))));
+  };
+
+  return (
+    <div className="mt-3 rounded-lg border bg-background/70 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+        <p className="flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground">
+          <TrendingUp
+            className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400"
+            aria-hidden
+          />
+          Equity runway · 2026→2046
+          {realTerms ? (
+            <span
+              className="rounded-sm border border-violet-500/30 bg-violet-500/10 px-1 py-px text-[9px] font-bold text-violet-700 dark:text-violet-300"
+              title="Value path deflated to 2026 dollars at 2.5%/yr — debt stays nominal"
+            >
+              2026$
+            </span>
+          ) : null}
+        </p>
+        <p className="text-[10.5px] text-muted-foreground tabular-nums">
+          {fmtCurrency(Math.round(start.equity), { compact: true })} equity today →{" "}
+          <span className="font-semibold text-emerald-600 dark:text-emerald-400">
+            {fmtCurrency(Math.round(terminal.equity), { compact: true })}
+          </span>{" "}
+          at 2046
+        </p>
+      </div>
+
+      <div
+        role="img"
+        aria-label={`Portfolio equity runway chart, 2026 to 2046. Equity at five-year checkpoints: ${checkpoints}. Focus and use left and right arrow keys to inspect individual years.`}
+        tabIndex={0}
+        className="relative mt-2 h-[76px] cursor-crosshair touch-none rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60"
+        onPointerMove={(e) => trackFromEvent(e.clientX, e.currentTarget)}
+        onPointerLeave={() => onHoverT(null)}
+        onBlur={() => onHoverT(null)}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+            e.preventDefault();
+            const dir = e.key === "ArrowLeft" ? -1 : 1;
+            onHoverT(Math.min(20, Math.max(0, (hoverT ?? 20) + dir)));
+          } else if (e.key === "Escape" || e.key === "Home" || e.key === "End") {
+            if (e.key === "Home") onHoverT(0);
+            else if (e.key === "End") onHoverT(20);
+            else onHoverT(null);
+          }
+        }}
+      >
+        <svg
+          viewBox={`0 0 ${RUNWAY_W} ${RUNWAY_H}`}
+          preserveAspectRatio="none"
+          className="absolute inset-0 h-full w-full"
+          aria-hidden
+        >
+          <defs>
+            <linearGradient id="port-runway-grad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#10b981" stopOpacity={0.18} />
+              <stop offset="100%" stopColor="#10b981" stopOpacity={0.03} />
+            </linearGradient>
+          </defs>
+          {/* equity wedge between the value and debt paths */}
+          <path d={wedge} fill="url(#port-runway-grad)" />
+          {/* aggregate amortizing balance (contractual, nominal) */}
+          <path
+            d={debtLine}
+            fill="none"
+            stroke="#a1a1aa"
+            strokeWidth={1.5}
+            strokeDasharray="5 4"
+            vectorEffect="non-scaling-stroke"
+          />
+          {/* aggregate value path (rides the real-terms display layer) */}
+          <path
+            d={valueLine}
+            fill="none"
+            stroke={realTerms ? "#8b5cf6" : "#10b981"}
+            strokeWidth={2.25}
+            strokeLinecap="round"
+            vectorEffect="non-scaling-stroke"
+          />
+        </svg>
+
+        {/* terminal dot on the value path (HTML — stays a perfect circle) */}
+        <span
+          className="pointer-events-none absolute h-[7px] w-[7px] -translate-y-1/2 translate-x-[-3.5px] rounded-full ring-2 ring-background"
+          style={{
+            left: "100%",
+            top: `${(yOf(terminal.value) / RUNWAY_H) * 100}%`,
+            backgroundColor: realTerms ? "#8b5cf6" : "#10b981",
+          }}
+          aria-hidden
+        />
+
+        {/* blended raw-land depletion milestone */}
+        {depletionYear !== null
+          ? (() => {
+              const t = Math.min(20, Math.max(1, depletionYear - 2026));
+              const leftPct = (t / 20) * 100;
+              return (
+                <div
+                  className="pointer-events-none absolute inset-y-0"
+                  style={{ left: `${leftPct}%` }}
+                  aria-hidden
+                >
+                  <div className="h-full border-l border-dashed border-amber-500/55" />
+                  <span
+                    className="absolute bottom-0.5 flex -translate-x-1/2 items-center gap-0.5 whitespace-nowrap text-[9px] font-semibold text-amber-700 dark:text-amber-400"
+                    style={{
+                      left: 0,
+                      transform: `translateX(${
+                        leftPct < 10 ? -leftPct + 4 : leftPct > 90 ? -(leftPct - 96) : -50
+                      }%)`,
+                    }}
+                  >
+                    <Flame className="h-2.5 w-2.5" aria-hidden />
+                    raw-land ~{depletionYear}
+                  </span>
+                </div>
+              );
+            })()
+          : null}
+
+        {/* hover guide + readout */}
+        {hover && hoverT !== null ? (
+          <>
+            <div
+              className="pointer-events-none absolute inset-y-0 w-px bg-foreground/25"
+              style={{ left: `${(hoverT / 20) * 100}%` }}
+              aria-hidden
+            />
+            <div
+              className="pointer-events-none absolute top-0 z-10 -translate-x-1/2 whitespace-nowrap rounded-md border bg-popover px-2 py-1.5 text-[10.5px] leading-snug shadow-sm"
+              style={{
+                left: `${Math.min(87, Math.max(13, (hoverT / 20) * 100))}%`,
+              }}
+            >
+              <p className="font-semibold tabular-nums">
+                {hover.year}
+                {realTerms ? (
+                  <span className="ml-1 text-[9px] font-bold uppercase text-violet-600 dark:text-violet-300">
+                    2026$
+                  </span>
+                ) : null}
+              </p>
+              <p className="mt-0.5 tabular-nums text-muted-foreground">
+                value{" "}
+                <span className={realTerms ? "font-medium text-violet-600 dark:text-violet-300" : "font-medium text-emerald-600 dark:text-emerald-400"}>
+                  {fmtCurrency(Math.round(hover.value), { compact: true })}
+                </span>
+              </p>
+              <p className="tabular-nums text-muted-foreground">
+                debt{" "}
+                <span className="font-medium text-zinc-600 dark:text-zinc-300">
+                  {fmtCurrency(Math.round(hover.debt), { compact: true })}
+                </span>
+              </p>
+              <p className="tabular-nums">
+                equity{" "}
+                <span className="font-semibold text-emerald-600 dark:text-emerald-400">
+                  {fmtCurrency(Math.round(hover.equity), { compact: true })}
+                </span>
+              </p>
+            </div>
+          </>
+        ) : null}
+      </div>
+
+      <div className="mt-1.5 flex justify-between text-[9.5px] font-medium tabular-nums text-muted-foreground">
+        {[2026, 2031, 2036, 2041, 2046].map((y) => (
+          <span key={y}>{y}</span>
+        ))}
+      </div>
+      <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground">
+        Each column compounds at its market&apos;s own CAGR
+        {realTerms ? " (deflated to 2026$)" : ""} while its note amortizes at
+        its own posture — land paper 35% down / 8.5%, improved product 20% down
+        / 6.5%. Debt is contractual and stays nominal
+        {realTerms ? " under the lens" : ""}; the wedge is the equity build.
+      </p>
+    </div>
   );
 }

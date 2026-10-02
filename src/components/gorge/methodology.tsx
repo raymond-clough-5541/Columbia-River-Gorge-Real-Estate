@@ -249,6 +249,31 @@ function MethodologyBody() {
           region's dossier mirrors <span className="font-mono">docs/EXPANSION-PLAN.md §7</span>).
         </p>
       </Section>
+
+      <Section title="8 · Aggregate curves & the runway chart (round 14)">
+        <p>
+          <strong className="text-foreground">Portfolios underwrite per entry, never at one blanket rate.</strong>{" "}
+          The compare sheet&apos;s equity-runway chart aggregates two paths
+          across the whole shortlist: the value path compounds each
+          column at its own market CAGR (deflated to 2026$ when the lens
+          is on), while the debt path amortizes each note at its own
+          posture — land paper 35% down / 8.5%, improved product 20% down
+          / 6.5%. The wedge between the curves is the equity build; the
+          dashed amber milestone marks the price-weighted average
+          raw-land depletion year of the mix.
+        </p>
+        <p>
+          The live region card&apos;s corridor composite indexes every
+          attached market to 100 at 2026 and averages their
+          depletion-adjusted curves — each market compounds at its own
+          CAGR until its depletion year, then cools to the 2.5%
+          post-depletion replacement rate — so the visible bend in the
+          line is the corridor&apos;s blended scarcity, not an input. The
+          amortization schedule prints with repeated header rows and a
+          self-contained posture block (which note, which rate, when
+          generated) for paper dossiers.
+        </p>
+      </Section>
     </div>
   );
 }
