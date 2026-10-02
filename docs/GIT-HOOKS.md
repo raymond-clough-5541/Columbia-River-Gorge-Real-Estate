@@ -92,7 +92,7 @@ very things that weren't running.
 | `pre-commit-gitleaks` | ↳ sub-hook | Secret scan of **staged** changes — `gitleaks detect --staged --redact` when installed (respects `.gitleaks.toml`), grep fallback otherwise. Blocks the commit on a hit |
 | `pre-commit-lint` | ↳ sub-hook | ESLint pass over **staged** `.ts/.tsx/.js/.jsx` only (`--cache`, near-instant on repeat). Blocks on errors |
 | `commit-msg` | message stage | Hygiene gate: real subject required (≥ 12 chars, ≤ 100, no generic one-worders). Merge/daemon/checkpoint subjects exempt |
-| `post-commit` | after every commit on `main` | **Auto-push to `github` + `origin`**, with the PAT drop-file self-heal applied first, and non-fast-forward recovery (force-push **with lease** only after verifying the remote tip is an ancestor of local HEAD) |
+| `post-commit` | after every commit on `main` | **Auto-push to every configured remote** (remotes pointing at the same URL are deduped — see the race note below), with the PAT drop-file self-heal applied first, and non-fast-forward recovery (force-push **with lease** only after verifying the remote tip is an ancestor of local HEAD) |
 
 Plus the standing support tooling:
 
@@ -122,6 +122,23 @@ post-commit: HEAD=5839c329… branch=main
 
 Every layer observed firing: secret scan → message gate → PAT self-heal →
 dual-remote push → race recovery. Remote tip == local HEAD after.
+
+### The alias-race fix (2026-10-02, round 14 — `9d00112`→next)
+
+The receipt above shows a cosmetic-but-real defect: `origin` hit the
+non-fast-forward recovery path on **every** commit. Root cause: `github` and
+`origin` are aliases of the *same* repository URL, and the hook pushed both in
+parallel — the two pushes race each other on GitHub's server-side ref lock,
+and the loser is rejected as non-fast-forward, burning a fetch +
+force-with-lease round-trip each time. It always recovered, so pushes never
+failed, but the log noise masked real non-fast-forward events (the signal the
+recovery path exists to surface).
+
+**Fix**: `post-commit` now normalizes each remote URL (credential-stripped)
+and dedupes before pushing — first remote name per unique URL wins, skipped
+aliases are logged as `≡ alias (deduped)`. The same fix is mirrored into the
+portable kit (`portable-workflows/zai-redeploy-kit/assets/git-hooks/post-commit`).
+A genuine non-fast-forward now means what it says: the remote genuinely moved.
 
 ---
 

@@ -92,7 +92,18 @@ push_one() {
   fi
 }
 
+# Dedupe remotes that point at the SAME repository URL (aliases like
+# "github" + "origin"). Two parallel pushes to one URL race each other on the
+# server's ref lock: the loser is rejected non-fast-forward and burns a
+# recovery round-trip on every commit. First name per unique URL wins.
+declare -A SEEN_URLS=()
 for remote in $(git remote); do
+  url="$(git remote get-url "$remote" 2>/dev/null | sed -E 's#https://[^@/]+@#https://#')"
+  if [ -n "${SEEN_URLS[$url]:-}" ]; then
+    echo "[$(timestamp)]   ≡ $remote (alias of ${SEEN_URLS[$url]} — same URL, deduped)" >> "$LOG"
+    continue
+  fi
+  SEEN_URLS["$url"]="$remote"
   push_one "$remote" &
 done
 wait

@@ -83,12 +83,30 @@ push_one() {
   fi
 }
 
+# Dedupe remotes that point at the SAME repository URL (e.g. "github" and
+# "origin" aliases of github.com/KeyWolfpack/fsbo). Pushing the same commit to
+# the same URL twice IN PARALLEL makes the two pushes race each other on the
+# server's ref lock: the loser is rejected as non-fast-forward and burns a
+# fetch + force-with-lease recovery round-trip on EVERY commit. First remote
+# name per unique URL wins; skipped aliases are logged, not pushed.
+declare -A SEEN_URLS=()
+UNIQUE_REMOTES=""
 for remote in $PUSH_REMOTES; do
-  if git remote get-url "$remote" >/dev/null 2>&1; then
-    push_one "$remote" &
-  else
+  if ! git remote get-url "$remote" >/dev/null 2>&1; then
     echo "[$(timestamp)]   ⊘ $remote (remote not configured — skipped)" >> "$LOG"
+    continue
   fi
+  url="$(git remote get-url "$remote" | sed -E 's#https://[^@/]+@#https://#')"
+  if [ -n "${SEEN_URLS[$url]:-}" ]; then
+    echo "[$(timestamp)]   ≡ $remote (alias of ${SEEN_URLS[$url]} — same URL, deduped)" >> "$LOG"
+    continue
+  fi
+  SEEN_URLS["$url"]="$remote"
+  UNIQUE_REMOTES="$UNIQUE_REMOTES $remote"
+done
+
+for remote in $UNIQUE_REMOTES; do
+  push_one "$remote" &
 done
 wait
 
