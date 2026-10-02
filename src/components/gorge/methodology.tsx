@@ -121,6 +121,16 @@ function MethodologyBody() {
           appreciation pick are computed independently, and diverge whenever
           the best cash-flow listing is not the strongest compounding market.
         </p>
+        <p>
+          <strong className="text-foreground">What-if entries:</strong> the
+          sheet can underwrite one hypothetical listing at a target price
+          point alongside the real stars. It flows through the identical
+          underwriting posture and can win rows and verdict picks — the amber
+          column is a pencil, not a parcel. The starred set itself exports to
+          a self-describing JSON document and restores on any device running
+          this inventory; ids the inventory no longer knows are skipped with
+          a note rather than silently dropped.
+        </p>
       </Section>
 
       <Section title="5 · Comparable matching">
@@ -130,6 +140,16 @@ function MethodologyBody() {
           price, 15% land supply, and 15% depletion runway — so a
           &quot;comparable&quot; is a market that prices and scars
           similarly, not merely a geographic neighbor.
+        </p>
+        <p>
+          <strong className="text-foreground">Pinned-set aggregates</strong>
+          (Master Matrix) sum the net-buildable midpoints of the pinned
+          jurisdictions, average their growth rates arithmetically, and
+          compound that blend over the full 2026–2046 horizon — an honest
+          first-order sketch of the pinned corridor slice, not a
+          portfolio-weighted forecast. The corridor-map timeline readouts
+          apply the same per-market compounding at the scrub year, with
+          spent markets contributing zero remaining reserve.
         </p>
       </Section>
 

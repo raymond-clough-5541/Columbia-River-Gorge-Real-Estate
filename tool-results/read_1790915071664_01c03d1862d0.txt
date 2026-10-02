@@ -1,0 +1,774 @@
+     1→"use client";
+     2→
+     3→import { useMemo, useState } from "react";
+     4→import {
+     5→  ArrowDown,
+     6→  ArrowUp,
+     7→  ArrowUpDown,
+     8→  ChevronRight,
+     9→  Columns3,
+    10→  Download,
+    11→  Droplets,
+    12→  ExternalLink,
+    13→  Flame,
+    14→  Pin,
+    15→  PinOff,
+    16→  Recycle,
+    17→  ShieldAlert,
+    18→} from "lucide-react";
+    19→import {
+    20→  DropdownMenu,
+    21→  DropdownMenuCheckboxItem,
+    22→  DropdownMenuContent,
+    23→  DropdownMenuLabel,
+    24→  DropdownMenuSeparator,
+    25→  DropdownMenuTrigger,
+    26→} from "@/components/ui/dropdown-menu";
+    27→import {
+    28→  Table,
+    29→  TableBody,
+    30→  TableCell,
+    31→  TableHead,
+    32→  TableHeader,
+    33→  TableRow,
+    34→} from "@/components/ui/table";
+    35→import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+    36→import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+    37→import { cn } from "@/lib/utils";
+    38→import { downloadCsv, timestampSuffix, toCsv, type CsvCell } from "@/lib/csv";
+    39→import { useToast } from "@/hooks/use-toast";
+    40→import {
+    41→  fmtAcres,
+    42→  fmtCurrency,
+    43→  fmtPct,
+    44→  type Submarket,
+    45→} from "@/lib/gorge";
+    46→import type { NavigateFn } from "./gorge-app";
+    47→import {
+    48→  CagrBadge,
+    49→  DepletionBadge,
+    50→  FrameworkBadge,
+    51→  KeyStatRow,
+    52→  MicroLabel,
+    53→  SectionHeader,
+    54→  StateBadge,
+    55→} from "./shared";
+    56→
+    57→type SortCol = "net" | "baseline" | "cagr" | "forecast" | "footprint" | "dom";
+    58→type SortDir = "asc" | "desc";
+    59→
+    60→/** Toggleable data columns (Market + row chevron always stay). */
+    61→type ColumnKey =
+    62→  | "jurisdiction"
+    63→  | "footprint"
+    64→  | "net"
+    65→  | "baseline"
+    66→  | "dom"
+    67→  | "cagr"
+    68→  | "forecast"
+    69→  | "sqft"
+    70→  | "depletion";
+    71→
+    72→const COLUMN_LABELS: Record<ColumnKey, string> = {
+    73→  jurisdiction: "Jurisdiction & framework",
+    74→  footprint: "UGB/UGA footprint",
+    75→  net: "Net buildable",
+    76→  baseline: "2026 baseline",
+    77→  dom: "Days on market",
+    78→  cagr: "20-yr CAGR",
+    79→  forecast: "2046 forecast",
+    80→  sqft: "$ / sqft",
+    81→  depletion: "Depletion",
+    82→};
+    83→
+    84→const ALL_COLUMNS = Object.keys(COLUMN_LABELS) as ColumnKey[];
+    85→
+    86→const SORTABLE: { col: SortCol; label: string; className?: string }[] = [
+    87→  { col: "footprint", label: "UGB/UGA Footprint" },
+    88→  { col: "net", label: "Net Buildable" },
+    89→  { col: "baseline", label: "2026 Baseline" },
+    90→  { col: "dom", label: "Days on Mkt" },
+    91→  { col: "cagr", label: "20-yr CAGR" },
+    92→  { col: "forecast", label: "2046 Forecast" },
+    93→];
+    94→
+    95→const DEFAULT_VISIBLE: Record<ColumnKey, boolean> = {
+    96→  jurisdiction: true,
+    97→  footprint: true,
+    98→  net: true,
+    99→  baseline: true,
+   100→  dom: true,
+   101→  cagr: true,
+   102→  forecast: true,
+   103→  sqft: true,
+   104→  depletion: true,
+   105→};
+   106→
+   107→/** Row-pinning cap — three jurisdictions above the fold. */
+   108→const MAX_PINS = 3;
+   109→
+   110→export function MatrixView({
+   111→  submarkets,
+   112→  navigate,
+   113→}: {
+   114→  submarkets: Submarket[];
+   115→  navigate: NavigateFn;
+   116→}) {
+   117→  const [stateFilter, setStateFilter] = useState<"all" | "OR" | "WA">("all");
+   118→  const [jurisdictionFilter, setJurisdictionFilter] = useState<
+   119→    "all" | "Incorporated City" | "Unincorporated Urban Area"
+   120→  >("all");
+   121→  const [sortCol, setSortCol] = useState<SortCol>("net");
+   122→  const [sortDir, setSortDir] = useState<SortDir>("desc");
+   123→  const [detailSlug, setDetailSlug] = useState<string | null>(null);
+   124→  const [visibleCols, setVisibleCols] =
+   125→    useState<Record<ColumnKey, boolean>>(DEFAULT_VISIBLE);
+   126→  const [pins, setPins] = useState<string[]>([]);
+   127→
+   128→  const togglePin = (slug: string) => {
+   129→    // Event-time logic only — never inside a state updater (that would
+   130→    // update the Toaster while MatrixView renders → React warning).
+   131→    if (pins.includes(slug)) {
+   132→      setPins((prev) => prev.filter((s) => s !== slug));
+   133→      return;
+   134→    }
+   135→    if (pins.length >= MAX_PINS) {
+   136→      toast({
+   137→        title: "Pin limit reached",
+   138→        description: `Up to ${MAX_PINS} jurisdictions can stay pinned — unpin one first.`,
+   139→      });
+   140→      return;
+   141→    }
+   142→    setPins((prev) => (prev.includes(slug) ? prev : [...prev, slug]));
+   143→  };
+   144→
+   145→  const visibleCount = useMemo(
+   146→    () => ALL_COLUMNS.filter((c) => visibleCols[c]).length,
+   147→    [visibleCols]
+   148→  );
+   149→  const toggleCol = (col: ColumnKey) =>
+   150→    setVisibleCols((v) => ({ ...v, [col]: !v[col] }));
+   151→
+   152→  const rows = useMemo(() => {
+   153→    const mid = (s: Submarket) =>
+   154→      (s.netBuildableAcresMin + s.netBuildableAcresMax) / 2;
+   155→    const forecastMid = (s: Submarket) =>
+   156→      (s.projectedPrice2046Min + s.projectedPrice2046Max) / 2;
+   157→
+   158→    const value = (s: Submarket): number => {
+   159→      switch (sortCol) {
+   160→        case "net":
+   161→          return mid(s);
+   162→        case "baseline":
+   163→          return s.baselinePrice2026;
+   164→        case "cagr":
+   165→          return s.projectedCagr;
+   166→        case "forecast":
+   167→          return forecastMid(s);
+   168→        case "footprint":
+   169→          return s.totalFootprintAcres;
+   170→        case "dom":
+   171→          return (s.daysOnMarketMin + s.daysOnMarketMax) / 2;
+   172→      }
+   173→    };
+   174→
+   175→    return submarkets
+   176→      .filter(
+   177→        (s) =>
+   178→          (stateFilter === "all" || s.state === stateFilter) &&
+   179→          (jurisdictionFilter === "all" || s.jurisdictionType === jurisdictionFilter)
+   180→      )
+   181→      .sort((a, b) =>
+   182→        sortDir === "asc" ? value(a) - value(b) : value(b) - value(a)
+   183→      );
+   184→  }, [submarkets, stateFilter, jurisdictionFilter, sortCol, sortDir]);
+   185→
+   186→  const filteredNet = rows.reduce(
+   187→    (a, s) => a + (s.netBuildableAcresMin + s.netBuildableAcresMax) / 2,
+   188→    0
+   189→  );
+   190→  const filteredCagr =
+   191→    rows.length > 0
+   192→      ? rows.reduce((a, s) => a + s.projectedCagr, 0) / rows.length
+   193→      : 0;
+   194→
+   195→  const detail = submarkets.find((s) => s.slug === detailSlug) ?? null;
+   196→
+   197→  /** Pinned jurisdictions float above the fold, in pin order. */
+   198→  const orderedRows = useMemo(() => {
+   199→    const pinnedRows = pins
+   200→      .map((slug) => rows.find((r) => r.slug === slug))
+   201→      .filter((r): r is Submarket => Boolean(r));
+   202→    const rest = rows.filter((r) => !pins.includes(r.slug));
+   203→    return [...pinnedRows, ...rest];
+   204→  }, [rows, pins]);
+   205→
+   206→  const { toast } = useToast();
+   207→
+   208→  const exportCsv = () => {
+   209→    const headers = [
+   210→      "Market",
+   211→      "State",
+   212→      "County",
+   213→      "Jurisdiction Type",
+   214→      "Regulatory Framework",
+   215→      "UGB/UGA Footprint (ac)",
+   216→      "Gross Vacant (ac)",
+   217→      "Net Buildable Min (ac)",
+   218→      "Net Buildable Max (ac)",
+   219→      "Net Buildable Mid (ac)",
+   220→      "2026 Baseline Median ($)",
+   221→      "Price/SqFt Min ($)",
+   222→      "Price/SqFt Max ($)",
+   223→      "Days on Market Min",
+   224→      "Days on Market Max",
+   225→      "Projected 20-yr CAGR (%)",
+   226→      "2046 Forecast Min ($)",
+   227→      "2046 Forecast Max ($)",
+   228→      "Est. Raw-Land Depletion Year",
+   229→      "Water Purveyor",
+   230→      "Wastewater System",
+   231→      "Primary Constraints & WUI Risk",
+   232→    ];
+   233→    const data: CsvCell[][] = orderedRows.map((s) => [
+   234→      s.name,
+   235→      s.state,
+   236→      s.county,
+   237→      s.jurisdictionType,
+   238→      s.regulatoryFramework,
+   239→      s.totalFootprintAcres,
+   240→      s.grossVacantAcres,
+   241→      s.netBuildableAcresMin,
+   242→      s.netBuildableAcresMax,
+   243→      Math.round(((s.netBuildableAcresMin + s.netBuildableAcresMax) / 2) * 10) / 10,
+   244→      s.baselinePrice2026,
+   245→      Math.round(s.pricePerSqftMin),
+   246→      Math.round(s.pricePerSqftMax),
+   247→      s.daysOnMarketMin,
+   248→      s.daysOnMarketMax,
+   249→      s.projectedCagr,
+   250→      s.projectedPrice2046Min,
+   251→      s.projectedPrice2046Max,
+   252→      s.depletionYear,
+   253→      s.waterPurveyor,
+   254→      s.wastewaterSystem,
+   255→      s.primaryConstraints,
+   256→    ]);
+   257→    downloadCsv(
+   258→      `crgnsa-master-matrix-${timestampSuffix()}.csv`,
+   259→      toCsv(headers, data)
+   260→    );
+   261→    toast({
+   262→      title: "Master Matrix exported",
+   263→      description: `${rows.length} jurisdiction${rows.length === 1 ? "" : "s"} · current filters and sort order applied.`,
+   264→    });
+   265→  };
+   266→
+   267→  const toggleSort = (col: SortCol) => {
+   268→    if (col === sortCol) {
+   269→      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+   270→    } else {
+   271→      setSortCol(col);
+   272→      setSortDir("desc");
+   273→    }
+   274→  };
+   275→
+   276→  return (
+   277→    <div className="mx-auto w-full max-w-7xl px-4 pb-16 pt-10 sm:px-6 lg:px-8">
+   278→      <SectionHeader
+   279→        eyebrow="Master Real Estate & Land Inventory Matrix"
+   280→        title="All 11 jurisdictions, one sortable ledger"
+   281→        description="Filter by state and jurisdiction type, sort any column, and click a row for the infrastructure dossier — water purveyors, wastewater capacity, and fire-risk constraints that gate every buildable acre."
+   282→        action={
+   283→          <div className="flex items-center gap-2">
+   284→            <DropdownMenu>
+   285→              <DropdownMenuTrigger asChild>
+   286→                <button
+   287→                  type="button"
+   288→                  aria-label="Toggle column visibility"
+   289→                  className="inline-flex h-9 items-center gap-2 rounded-lg border bg-card px-3.5 text-[13px] font-medium shadow-sm transition-all hover:border-zinc-400 hover:shadow dark:hover:border-zinc-600 active:scale-[0.98]"
+   290→                >
+   291→                  <Columns3 className="h-3.5 w-3.5" aria-hidden />
+   292→                  Columns
+   293→                  <span className="rounded-sm bg-muted px-1.5 text-[11px] font-semibold tabular-nums">
+   294→                    {visibleCount}/{ALL_COLUMNS.length}
+   295→                  </span>
+   296→                </button>
+   297→              </DropdownMenuTrigger>
+   298→              <DropdownMenuContent align="end" className="w-56">
+   299→                <DropdownMenuLabel className="text-[12px] uppercase tracking-wider">
+   300→                  Visible columns
+   301→                </DropdownMenuLabel>
+   302→                <DropdownMenuSeparator />
+   303→                {ALL_COLUMNS.map((col) => (
+   304→                  <DropdownMenuCheckboxItem
+   305→                    key={col}
+   306→                    checked={visibleCols[col]}
+   307→                    onCheckedChange={() => toggleCol(col)}
+   308→                    onSelect={(e) => e.preventDefault()}
+   309→                    className="text-[13px]"
+   310→                  >
+   311→                    {COLUMN_LABELS[col]}
+   312→                  </DropdownMenuCheckboxItem>
+   313→                ))}
+   314→              </DropdownMenuContent>
+   315→            </DropdownMenu>
+   316→            <button
+   317→              type="button"
+   318→              onClick={exportCsv}
+   319→              disabled={rows.length === 0}
+   320→              className="inline-flex h-9 items-center gap-2 rounded-lg border bg-card px-4 text-[13px] font-medium shadow-sm transition-all hover:border-zinc-400 hover:shadow disabled:cursor-not-allowed disabled:opacity-50 dark:hover:border-zinc-600 active:scale-[0.98]"
+   321→            >
+   322→              <Download className="h-3.5 w-3.5" aria-hidden />
+   323→              Export CSV
+   324→            </button>
+   325→          </div>
+   326→        }
+   327→      />
+   328→
+   329→      {/* Filter + summary bar */}
+   330→      <div className="mb-5 flex flex-wrap items-center gap-4 rounded-xl border bg-card p-4 shadow-sm">
+   331→        <div className="flex items-center gap-3">
+   332→          <MicroLabel className="hidden sm:block">State</MicroLabel>
+   333→          <ToggleGroup
+   334→            type="single"
+   335→            value={stateFilter}
+   336→            onValueChange={(v) => {
+   337→              if (v) setStateFilter(v as "all" | "OR" | "WA");
+   338→            }}
+   339→            className="gap-1"
+   340→          >
+   341→            <ToggleGroupItem value="all" className="h-8 px-3 text-[13px]">All</ToggleGroupItem>
+   342→            <ToggleGroupItem value="OR" className="h-8 px-3 text-[13px]">Oregon</ToggleGroupItem>
+   343→            <ToggleGroupItem value="WA" className="h-8 px-3 text-[13px]">Washington</ToggleGroupItem>
+   344→          </ToggleGroup>
+   345→        </div>
+   346→        <div className="flex items-center gap-3">
+   347→          <MicroLabel className="hidden sm:block">Jurisdiction</MicroLabel>
+   348→          <ToggleGroup
+   349→            type="single"
+   350→            value={jurisdictionFilter}
+   351→            onValueChange={(v) => {
+   352→              if (v)
+   353→                setJurisdictionFilter(
+   354→                  v as "all" | "Incorporated City" | "Unincorporated Urban Area"
+   355→                );
+   356→            }}
+   357→            className="gap-1"
+   358→          >
+   359→            <ToggleGroupItem value="all" className="h-8 px-3 text-[13px]">All</ToggleGroupItem>
+   360→            <ToggleGroupItem value="Incorporated City" className="h-8 px-3 text-[13px]">Cities</ToggleGroupItem>
+   361→            <ToggleGroupItem value="Unincorporated Urban Area" className="h-8 px-3 text-[13px]">
+   362→              Unincorp. UGAs
+   363→            </ToggleGroupItem>
+   364→          </ToggleGroup>
+   365→        </div>
+   366→
+   367→        <div className="ml-auto flex items-center gap-6 text-[13px] tabular-nums">
+   368→          {pins.length > 0 ? (
+   369→            <button
+   370→              type="button"
+   371→              onClick={() => setPins([])}
+   372→              title="Unpin all jurisdictions"
+   373→              className="inline-flex h-7 items-center gap-1.5 rounded-md border border-amber-400/60 bg-amber-400/10 px-2.5 text-[12px] font-medium text-amber-700 transition-all hover:bg-amber-400/20 active:scale-[0.97] dark:text-amber-300"
+   374→            >
+   375→              <Pin className="h-3 w-3" fill="currentColor" aria-hidden />
+   376→              {pins.length}/{MAX_PINS} pinned
+   377→              <PinOff className="ml-1 h-3 w-3" aria-hidden />
+   378→            </button>
+   379→          ) : null}
+   380→          <span className="text-muted-foreground">
+   381→            Showing <span className="font-semibold text-foreground">{rows.length}</span> of{" "}
+   382→            {submarkets.length}
+   383→          </span>
+   384→          <span className="hidden text-muted-foreground sm:block">
+   385→            Reserve: <span className="font-semibold text-foreground">{fmtAcres(Math.round(filteredNet))}</span>
+   386→          </span>
+   387→          <span className="hidden text-muted-foreground md:block">
+   388→            Avg CAGR: <span className="font-semibold text-emerald-600 dark:text-emerald-400">{fmtPct(filteredCagr)}</span>
+   389→          </span>
+   390→        </div>
+   391→      </div>
+   392→
+   393→      {/* Matrix table — min-width tracks visible columns so hiding
+   394→          columns actually tightens the layout instead of leaving
+   395→          a fixed-width scroll region. */}
+   396→      <div className="overflow-x-auto rounded-xl border bg-card shadow-sm">
+   397→        <Table
+   398→          className="min-w-[640px]"
+   399→          style={{ minWidth: 320 + visibleCount * 95 }}
+   400→        >
+   401→          <TableHeader>
+   402→            <TableRow className="bg-muted/50 hover:bg-muted/50">
+   403→              <TableHead className="w-[210px]">Market</TableHead>
+   404→              {visibleCols.jurisdiction ? (
+   405→                <TableHead>Jurisdiction &amp; Framework</TableHead>
+   406→              ) : null}
+   407→              {SORTABLE.map((c) => {
+   408→                const colKey: ColumnKey | null =
+   409→                  c.col === "net"
+   410→                    ? "net"
+   411→                    : c.col === "baseline"
+   412→                      ? "baseline"
+   413→                      : c.col === "dom"
+   414→                        ? "dom"
+   415→                        : c.col === "cagr"
+   416→                          ? "cagr"
+   417→                          : c.col === "forecast"
+   418→                            ? "forecast"
+   419→                            : "footprint";
+   420→                if (!visibleCols[colKey]) return null;
+   421→                return (
+   422→                  <TableHead key={c.col} className="text-right">
+   423→                    <button
+   424→                      type="button"
+   425→                      onClick={() => toggleSort(c.col)}
+   426→                      className={cn(
+   427→                        "inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-[0.1em] transition-colors",
+   428→                        sortCol === c.col
+   429→                          ? "text-emerald-600 dark:text-emerald-400"
+   430→                          : "hover:text-foreground"
+   431→                      )}
+   432→                      aria-label={`Sort by ${c.label}`}
+   433→                    >
+   434→                      {c.label}
+   435→                      {sortCol === c.col ? (
+   436→                        sortDir === "asc" ? (
+   437→                          <ArrowUp className="h-3 w-3" aria-hidden />
+   438→                        ) : (
+   439→                          <ArrowDown className="h-3 w-3" aria-hidden />
+   440→                        )
+   441→                      ) : (
+   442→                        <ArrowUpDown className="h-3 w-3 opacity-40" aria-hidden />
+   443→                      )}
+   444→                    </button>
+   445→                  </TableHead>
+   446→                );
+   447→              })}
+   448→              {visibleCols.sqft ? (
+   449→                <TableHead className="text-right text-[11px] font-semibold uppercase tracking-[0.1em]">
+   450→                  $ / SqFt
+   451→                </TableHead>
+   452→              ) : null}
+   453→              {visibleCols.depletion ? (
+   454→                <TableHead className="text-right text-[11px] font-semibold uppercase tracking-[0.1em]">
+   455→                  Depletion
+   456→                </TableHead>
+   457→              ) : null}
+   458→              <TableHead className="w-10" aria-label="Row actions" />
+   459→            </TableRow>
+   460→          </TableHeader>
+   461→          <TableBody>
+   462→            {orderedRows.map((s) => {
+   463→              const netMid = (s.netBuildableAcresMin + s.netBuildableAcresMax) / 2;
+   464→              const isActive = detailSlug === s.slug;
+   465→              const pinned = pins.includes(s.slug);
+   466→              const pinRank = pins.indexOf(s.slug) + 1;
+   467→              return (
+   468→                <TableRow
+   469→                  key={s.slug}
+   470→                  onClick={() => setDetailSlug(s.slug)}
+   471→                  className={cn(
+   472→                    "cursor-pointer transition-colors hover:bg-muted/40",
+   473→                    isActive && "bg-emerald-500/[0.06]",
+   474→                    pinned &&
+   475→                      "border-l-[3px] border-l-amber-400/80 bg-amber-500/[0.05]"
+   476→                  )}
+   477→                  aria-label={`Open infrastructure dossier for ${s.name}, ${s.state}`}
+   478→                >
+   479→                  <TableCell className="py-3.5">
+   480→                    <div className="flex items-center gap-2">
+   481→                      {pinned ? (
+   482→                        <span
+   483→                          className="inline-flex h-4 min-w-4 items-center justify-center rounded-[3px] bg-amber-400/25 px-1 text-[9.5px] font-bold tabular-nums text-amber-700 dark:text-amber-300"
+   484→                          title={`Pinned #${pinRank}`}
+   485→                        >
+   486→                          {pinRank}
+   487→                        </span>
+   488→                      ) : null}
+   489→                      <span className="text-[14px] font-semibold">{s.name}</span>
+   490→                      <StateBadge state={s.state} />
+   491→                      <button
+   492→                        type="button"
+   493→                        onClick={(e) => {
+   494→                          e.stopPropagation();
+   495→                          togglePin(s.slug);
+   496→                        }}
+   497→                        aria-pressed={pinned}
+   498→                        aria-label={pinned ? `Unpin ${s.name}` : `Pin ${s.name} to the top of the matrix`}
+   499→                        title={
+   500→                          pinned
+   501→                            ? `Pinned #${pinRank} — click to unpin`
+   502→                            : pins.length >= MAX_PINS
+   503→                              ? "Pin limit reached (3)"
+   504→                              : "Pin to the top of the matrix"
+   505→                        }
+   506→                        className={cn(
+   507→                          "ml-auto inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-all active:scale-90",
+   508→                          pinned
+   509→                            ? "bg-amber-400/20 text-amber-600 hover:bg-amber-400/30 dark:text-amber-400"
+   510→                            : "text-muted-foreground/50 hover:bg-muted hover:text-amber-600 dark:hover:text-amber-400"
+   511→                        )}
+   512→                      >
+   513→                        <Pin
+   514→                          className="h-3.5 w-3.5"
+   515→                          fill={pinned ? "currentColor" : "none"}
+   516→                          aria-hidden
+   517→                        />
+   518→                      </button>
+   519→                    </div>
+   520→                    <p className="mt-0.5 text-[12px] text-muted-foreground">{s.county}</p>
+   521→                  </TableCell>
+   522→                  {visibleCols.jurisdiction ? (
+   523→                    <TableCell className="py-3.5">
+   524→                      <div className="flex flex-col items-start gap-1.5">
+   525→                        <span className="text-[13px]">{s.jurisdictionType}</span>
+   526→                        <FrameworkBadge framework={s.regulatoryFramework} />
+   527→                      </div>
+   528→                    </TableCell>
+   529→                  ) : null}
+   530→                  {visibleCols.footprint ? (
+   531→                    <TableCell className="py-3.5 text-right text-[13px] tabular-nums">
+   532→                      {fmtAcres(s.totalFootprintAcres)}
+   533→                    </TableCell>
+   534→                  ) : null}
+   535→                  {visibleCols.net ? (
+   536→                    <TableCell className="py-3.5 text-right text-[13px] font-medium tabular-nums">
+   537→                      <span className="block text-[13px] text-muted-foreground">
+   538→                        {fmtAcres(s.grossVacantAcres)} gross
+   539→                      </span>
+   540→                      {fmtAcres(s.netBuildableAcresMin)}–{fmtAcres(s.netBuildableAcresMax)}
+   541→                      <span className="block text-[11px] text-muted-foreground">
+   542→                        mid {fmtAcres(netMid)}
+   543→                      </span>
+   544→                    </TableCell>
+   545→                  ) : null}
+   546→                  {visibleCols.baseline ? (
+   547→                    <TableCell className="py-3.5 text-right text-[13px] font-semibold tabular-nums">
+   548→                      {fmtCurrency(s.baselinePrice2026, { compact: true })}
+   549→                    </TableCell>
+   550→                  ) : null}
+   551→                  {visibleCols.dom ? (
+   552→                    <TableCell className="py-3.5 text-right text-[13px] tabular-nums">
+   553→                      {s.daysOnMarketMin}–{s.daysOnMarketMax}
+   554→                    </TableCell>
+   555→                  ) : null}
+   556→                  {visibleCols.cagr ? (
+   557→                    <TableCell className="py-3.5 text-right">
+   558→                      <CagrBadge cagr={s.projectedCagr} showTier={false} />
+   559→                    </TableCell>
+   560→                  ) : null}
+   561→                  {visibleCols.forecast ? (
+   562→                    <TableCell className="py-3.5 text-right text-[13px] font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
+   563→                      {fmtCurrency(s.projectedPrice2046Min, { compact: true })}
+   564→                      <span className="text-muted-foreground"> – </span>
+   565→                      {fmtCurrency(s.projectedPrice2046Max, { compact: true })}
+   566→                    </TableCell>
+   567→                  ) : null}
+   568→                  {visibleCols.sqft ? (
+   569→                    <TableCell className="py-3.5 text-right text-[13px] tabular-nums text-muted-foreground">
+   570→                      ${Math.round(s.pricePerSqftMin)}–${Math.round(s.pricePerSqftMax)}
+   571→                    </TableCell>
+   572→                  ) : null}
+   573→                  {visibleCols.depletion ? (
+   574→                    <TableCell className="py-3.5 text-right">
+   575→                      <DepletionBadge year={s.depletionYear} />
+   576→                    </TableCell>
+   577→                  ) : null}
+   578→                  <TableCell className="py-3.5 text-right">
+   579→                    <ChevronRight className="h-4 w-4 text-muted-foreground" aria-hidden />
+   580→                  </TableCell>
+   581→                </TableRow>
+   582→              );
+   583→            })}
+   584→            {rows.length === 0 ? (
+   585→              <TableRow>
+   586→                <TableCell
+   587→                  colSpan={2 + visibleCount}
+   588→                  className="py-10 text-center text-sm text-muted-foreground"
+   589→                >
+   590→                  No jurisdictions match the current filters.
+   591→                </TableCell>
+   592→              </TableRow>
+   593→            ) : null}
+   594→          </TableBody>
+   595→        </Table>
+   596→      </div>
+   597→
+   598→      {/* Infrastructure dossier drawer */}
+   599→      <Sheet
+   600→        open={detail !== null}
+   601→        onOpenChange={(open) => {
+   602→          if (!open) setDetailSlug(null);
+   603→        }}
+   604→      >
+   605→        <SheetContent
+   606→          className="thin-scroll w-full overflow-y-auto sm:max-w-md"
+   607→          aria-describedby={undefined}
+   608→        >
+   609→          {detail ? (
+   610→            <>
+   611→              <SheetHeader className="text-left">
+   612→                <SheetTitle className="flex flex-wrap items-center gap-2 text-xl">
+   613→                  {detail.name}
+   614→                  <StateBadge state={detail.state} />
+   615→                </SheetTitle>
+   616→                <p className="text-[13px] text-muted-foreground">
+   617→                  {detail.county} · {detail.jurisdictionType}
+   618→                </p>
+   619→                <div className="flex flex-wrap gap-2 pt-1">
+   620→                  <FrameworkBadge framework={detail.regulatoryFramework} />
+   621→                  <CagrBadge cagr={detail.projectedCagr} />
+   622→                  <DepletionBadge year={detail.depletionYear} />
+   623→                </div>
+   624→              </SheetHeader>
+   625→
+   626→              <div className="mt-5 space-y-6 px-4 pb-8">
+   627→                <p className="text-[13.5px] leading-relaxed text-muted-foreground">
+   628→                  {detail.summaryNarrative}
+   629→                </p>
+   630→
+   631→                {/* Price band visual */}
+   632→                <div className="rounded-lg border bg-background p-4">
+   633→                  <MicroLabel>Valuation Band · 2026 → 2046</MicroLabel>
+   634→                  <div className="mt-4 space-y-4">
+   635→                    <div>
+   636→                      <div className="mb-1 flex justify-between text-[12px] tabular-nums">
+   637→                        <span className="text-muted-foreground">2026 baseline</span>
+   638→                        <span className="font-semibold">{fmtCurrency(detail.baselinePrice2026, { compact: true })}</span>
+   639→                      </div>
+   640→                      <div className="h-2 rounded-full bg-muted">
+   641→                        <div
+   642→                          className="h-full rounded-full bg-zinc-400 dark:bg-zinc-500"
+   643→                          style={{
+   644→                            width: `${(detail.baselinePrice2026 / 2250000) * 100}%`,
+   645→                          }}
+   646→                        />
+   647→                      </div>
+   648→                    </div>
+   649→                    <div>
+   650→                      <div className="mb-1 flex justify-between text-[12px] tabular-nums">
+   651→                        <span className="text-muted-foreground">2046 projected band</span>
+   652→                        <span className="font-semibold text-emerald-600 dark:text-emerald-400">
+   653→                          {fmtCurrency(detail.projectedPrice2046Min, { compact: true })}–
+   654→                          {fmtCurrency(detail.projectedPrice2046Max, { compact: true })}
+   655→                        </span>
+   656→                      </div>
+   657→                      <div className="relative h-2 rounded-full bg-muted">
+   658→                        <div
+   659→                          className="h-full rounded-full bg-emerald-500"
+   660→                          style={{
+   661→                            marginLeft: `${(detail.projectedPrice2046Min / 2250000) * 100}%`,
+   662→                            width: `${((detail.projectedPrice2046Max - detail.projectedPrice2046Min) / 2250000) * 100}%`,
+   663→                          }}
+   664→                        />
+   665→                      </div>
+   666→                    </div>
+   667→                  </div>
+   668→                </div>
+   669→
+   670→                {/* Key stats */}
+   671→                <div>
+   672→                  <MicroLabel>Inventory Metrics</MicroLabel>
+   673→                  <div className="mt-2 rounded-lg border bg-background px-4 py-1">
+   674→                    <KeyStatRow
+   675→                      label="UGB/UGA footprint"
+   676→                      value={fmtAcres(detail.totalFootprintAcres)}
+   677→                    />
+   678→                    <KeyStatRow
+   679→                      label="Gross vacant acres"
+   680→                      value={fmtAcres(detail.grossVacantAcres)}
+   681→                    />
+   682→                    <KeyStatRow
+   683→                      label="Net buildable band"
+   684→                      value={`${fmtAcres(detail.netBuildableAcresMin)} – ${fmtAcres(detail.netBuildableAcresMax)}`}
+   685→                    />
+   686→                    <KeyStatRow
+   687→                      label="2026 baseline median"
+   688→                      value={fmtCurrency(detail.baselinePrice2026)}
+   689→                    />
+   690→                    <KeyStatRow
+   691→                      label="Price per sqft"
+   692→                      value={`$${Math.round(detail.pricePerSqftMin)} – $${Math.round(detail.pricePerSqftMax)}`}
+   693→                    />
+   694→                    <KeyStatRow
+   695→                      label="Days on market"
+   696→                      value={`${detail.daysOnMarketMin} – ${detail.daysOnMarketMax}`}
+   697→                    />
+   698→                  </div>
+   699→                </div>
+   700→
+   701→                {/* Infrastructure limits */}
+   702→                <div>
+   703→                  <MicroLabel>Infrastructure Limits</MicroLabel>
+   704→                  <div className="mt-2 space-y-3">
+   705→                    <div className="flex items-start gap-3 rounded-lg border bg-background p-3.5">
+   706→                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-sky-500/10 text-sky-600 dark:text-sky-400">
+   707→                        <Droplets className="h-4 w-4" aria-hidden />
+   708→                      </span>
+   709→                      <div>
+   710→                        <p className="text-[12px] font-semibold uppercase tracking-wide text-muted-foreground">
+   711→                          Water purveyor
+   712→                        </p>
+   713→                        <p className="mt-0.5 text-[13px] leading-relaxed">
+   714→                          {detail.waterPurveyor}
+   715→                        </p>
+   716→                      </div>
+   717→                    </div>
+   718→                    <div className="flex items-start gap-3 rounded-lg border bg-background p-3.5">
+   719→                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-teal-500/10 text-teal-600 dark:text-teal-400">
+   720→                        <Recycle className="h-4 w-4" aria-hidden />
+   721→                      </span>
+   722→                      <div>
+   723→                        <p className="text-[12px] font-semibold uppercase tracking-wide text-muted-foreground">
+   724→                          Wastewater system
+   725→                        </p>
+   726→                        <p className="mt-0.5 text-[13px] leading-relaxed">
+   727→                          {detail.wastewaterSystem}
+   728→                        </p>
+   729→                      </div>
+   730→                    </div>
+   731→                    <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/[0.05] p-3.5">
+   732→                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400">
+   733→                        <Flame className="h-4 w-4" aria-hidden />
+   734→                      </span>
+   735→                      <div>
+   736→                        <p className="text-[12px] font-semibold uppercase tracking-wide text-muted-foreground">
+   737→                          Primary constraints &amp; WUI fire risk
+   738→                        </p>
+   739→                        <p className="mt-0.5 text-[13px] leading-relaxed">
+   740→                          {detail.primaryConstraints}
+   741→                        </p>
+   742→                      </div>
+   743→                    </div>
+   744→                  </div>
+   745→                </div>
+   746→
+   747→                <button
+   748→                  type="button"
+   749→                  onClick={() => {
+   750→                    setDetailSlug(null);
+   751→                    navigate({ view: "submarket", slug: detail.slug });
+   752→                  }}
+   753→                  className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-zinc-900 text-sm font-semibold text-white transition-colors hover:bg-zinc-800 dark:bg-emerald-500 dark:text-zinc-950 dark:hover:bg-emerald-400"
+   754→                >
+   755→                  <ExternalLink className="h-4 w-4" aria-hidden />
+   756→                  Open micro-market profile
+   757→                </button>
+   758→              </div>
+   759→            </>
+   760→          ) : null}
+   761→        </SheetContent>
+   762→      </Sheet>
+   763→
+   764→      {/* Source note */}
+   765→      <p className="mt-4 flex items-start gap-2 text-[12px] leading-relaxed text-muted-foreground">
+   766→        <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+   767→        Net buildable acreage nets gross vacant land down for slopes, critical
+   768→        habitat, wetlands, and right-of-way. Infrastructure capacity and WUI
+   769→        fire-risk classes are as compiled in the corridor inventory report.
+   770→      </p>
+   771→    </div>
+   772→  );
+   773→}
+   774→

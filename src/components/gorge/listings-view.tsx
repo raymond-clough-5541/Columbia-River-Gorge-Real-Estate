@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import {
   Bath,
   BedDouble,
   Building2,
   Camera,
+  Database,
+  Download,
   Grape,
   LandPlot,
   Loader2,
@@ -16,10 +18,19 @@ import {
   Search,
   Sparkles,
   Star,
+  Upload,
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Select,
   SelectContent,
@@ -30,7 +41,7 @@ import {
 import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
-import { toggleWatchlist, useWatchlist } from "@/lib/watchlist-store";
+import { toggleWatchlist, useWatchlist, exportWatchlistDoc, parseWatchlistDoc, restoreWatchlist } from "@/lib/watchlist-store";
 import {
   fmtAcres,
   fmtCurrency,
@@ -231,6 +242,158 @@ function ListingCard({
         </div>
       </div>
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Watchlist portability menu — JSON export / restore (round 7).       */
+/* The starred set survives browser storage wipes and moves between    */
+/* machines via a self-describing JSON document.                        */
+/* ------------------------------------------------------------------ */
+
+function timestampFileSuffix(): string {
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(
+    d.getHours()
+  )}${p(d.getMinutes())}${p(d.getSeconds())}`;
+}
+
+function WatchlistDataMenu({
+  listings,
+}: {
+  listings: PropertyListing[];
+}) {
+  const watchlist = useWatchlist();
+  const { toast } = useToast();
+  const fileRef = useRef<HTMLInputElement | null>(null);
+
+  const exportJson = () => {
+    if (watchlist.length === 0) {
+      toast({
+        title: "Nothing to export",
+        description: "Star at least one listing first — the export mirrors the watchlist.",
+      });
+      return;
+    }
+    const blob = new Blob([exportWatchlistDoc()], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `crgnsa-watchlist-${timestampFileSuffix()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    toast({
+      title: "Watchlist exported",
+      description: `${watchlist.length} starred listing${watchlist.length === 1 ? "" : "s"} → JSON.`,
+    });
+  };
+
+  const onFileChosen = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-picking the same file
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const raw = typeof reader.result === "string" ? reader.result : "";
+      const doc = parseWatchlistDoc(raw);
+      if (!doc) {
+        toast({
+          title: "Not a watchlist file",
+          description:
+            "Expected a CRGNSA watchlist JSON export — check the file and try again.",
+          variant: "destructive",
+        });
+        return;
+      }
+      // Ids the current inventory doesn't know (retired listings, other
+      // deployments) are skipped with a note rather than silently dropped.
+      const known = doc.ids.filter((id) =>
+        listings.some((l) => l.id === id)
+      );
+      const skipped = doc.ids.length - known.length;
+      restoreWatchlist(known);
+      toast({
+        title: known.length > 0 ? "Watchlist restored" : "Nothing to restore",
+        description:
+          known.length > 0
+            ? `${known.length} listing${known.length === 1 ? "" : "s"} re-starred${
+                skipped > 0 ? ` · ${skipped} unknown id${skipped === 1 ? "" : "s"} skipped` : ""
+              }.`
+            : "None of the file's listings match this inventory.",
+      });
+    };
+    reader.onerror = () => {
+      toast({
+        title: "Could not read the file",
+        description: "The upload failed mid-read — try exporting it again.",
+        variant: "destructive",
+      });
+    };
+    reader.readAsText(file);
+  };
+
+  return (
+    <>
+      <input
+        ref={fileRef}
+        type="file"
+        accept="application/json,.json"
+        className="hidden"
+        onChange={onFileChosen}
+        aria-hidden
+        tabIndex={-1}
+      />
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            aria-label="Watchlist data — export or restore"
+            title="Export or restore the starred set"
+            className="inline-flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-[12px] font-medium text-muted-foreground transition-all hover:border-zinc-400 hover:text-foreground active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60 dark:hover:border-zinc-600"
+          >
+            <Database className="h-3.5 w-3.5" aria-hidden />
+            Data
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-60">
+          <DropdownMenuLabel className="text-[11px] uppercase tracking-wider">
+            Watchlist portability
+          </DropdownMenuLabel>
+          <DropdownMenuItem
+            onSelect={exportJson}
+            disabled={watchlist.length === 0}
+            className="gap-2 text-[13px]"
+          >
+            <Download className="h-3.5 w-3.5" aria-hidden />
+            Export JSON
+            <span className="ml-auto text-[11px] tabular-nums text-muted-foreground">
+              {watchlist.length}
+            </span>
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onSelect={() => {
+              // Defer the click until the menu finishes closing so focus
+              // hand-off doesn't re-open the trigger.
+              window.setTimeout(() => fileRef.current?.click(), 0);
+            }}
+            className="gap-2 text-[13px]"
+          >
+            <Upload className="h-3.5 w-3.5" aria-hidden />
+            Restore from file…
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <p className="px-2 pb-1.5 pt-0.5 text-[11px] leading-relaxed text-muted-foreground">
+            The starred set lives in this browser only — export moves it
+            across devices and survives storage wipes.
+          </p>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </>
   );
 }
 
@@ -516,7 +679,9 @@ export function ListingsView({
                 <CompareTrigger
                   listings={listings}
                   onOpenListing={(l) => setDetailId(l.id)}
+                  submarkets={submarkets}
                 />
+                <WatchlistDataMenu listings={listings} />
               </>
             )}
           </p>

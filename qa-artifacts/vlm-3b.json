@@ -1,0 +1,28 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "Based on the image provided, here is the precise description of the right-most column header area:\n\n**Text Content:**\nThe text in the header cell below the dashed amber placeholder reads:\n**\"What-if - $16\"**\n*(Note: The number appears to be \"16\" followed by a partial character, likely a 'k' or '0', but the visible portion is clearly \"$16\")*\n\nBelow that line, in smaller grey text, it says:\n**\"Single-Fam...\"**\n\n**Truncation Status:**\n*   **Yes, it is truncated.** The main title \"What-if - $16...\" is cut off mid-character at the right edge of the column.\n*   The subtitle \"Single-Family\" is truncated with an ellipsis (\"...\").\n\n**Footer Overlap:**\n*   **Yes, there is an overlap.** A dark tooltip or popup box titled **\"What-if added to sheet\"** is positioned in the bottom right corner. This popup physically overlaps and obscures the bottom-right section of the table, covering the footer area of the right-most column and part of the row below it.",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": 1790916633,
+  "id": "202610021250294f821aa4226a4d4d",
+  "model": "glm-5v-turbo",
+  "object": "chat.completion",
+  "request_id": "202610021250294f821aa4226a4d4d",
+  "usage": {
+    "completion_tokens": 233,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "prompt_tokens": 1735,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "total_tokens": 1968
+  }
+}

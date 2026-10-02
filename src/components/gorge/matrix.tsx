@@ -1,8 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ArrowDown,
+  ArrowRight,
   ArrowUp,
   ArrowUpDown,
   ChevronRight,
@@ -38,9 +39,11 @@ import { cn } from "@/lib/utils";
 import { downloadCsv, timestampSuffix, toCsv, type CsvCell } from "@/lib/csv";
 import { useToast } from "@/hooks/use-toast";
 import {
+  cagrTier,
   fmtAcres,
   fmtCurrency,
   fmtPct,
+  type CagrTier,
   type Submarket,
 } from "@/lib/gorge";
 import type { NavigateFn } from "./gorge-app";
@@ -107,6 +110,36 @@ const DEFAULT_VISIBLE: Record<ColumnKey, boolean> = {
 /** Row-pinning cap — three jurisdictions above the fold. */
 const MAX_PINS = 3;
 
+/** Session-scoped pin persistence — survives the "Model the pinned set →
+ *  ← Back to master matrix" round trip (view unmounts mid-loop). MatrixView
+ *  only mounts post-hydration (the hash router serves the overview server
+ *  snapshot first), so reading sessionStorage in the initializer is safe. */
+const PINS_KEY = "crgnsa-matrix-pins";
+
+function readPins(): string[] {
+  try {
+    const raw = sessionStorage.getItem(PINS_KEY);
+    const parsed = raw ? (JSON.parse(raw) as unknown) : [];
+    return Array.isArray(parsed)
+      ? parsed
+          .filter((x): x is string => typeof x === "string")
+          .slice(0, MAX_PINS)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Text-only tier colors for the pinned-set CAGR figure — the same text
+ *  pairs the CAGR_TIER_STYLES badges use, minus their bg/border chrome
+ *  (the amber dossier strip supplies its own tint). */
+const CAGR_VALUE_COLORS: Record<CagrTier, string> = {
+  elite: "text-emerald-700 dark:text-emerald-300",
+  strong: "text-emerald-600 dark:text-emerald-400",
+  moderate: "text-amber-700 dark:text-amber-300",
+  baseline: "text-zinc-600 dark:text-zinc-300",
+};
+
 export function MatrixView({
   submarkets,
   navigate,
@@ -123,7 +156,18 @@ export function MatrixView({
   const [detailSlug, setDetailSlug] = useState<string | null>(null);
   const [visibleCols, setVisibleCols] =
     useState<Record<ColumnKey, boolean>>(DEFAULT_VISIBLE);
-  const [pins, setPins] = useState<string[]>([]);
+  const [pins, setPins] = useState<string[]>(readPins);
+
+  // Mirror pins into sessionStorage so the "Model the pinned set → back"
+  // round trip keeps the shortlist alive for the whole session.
+  useEffect(() => {
+    try {
+      if (pins.length === 0) sessionStorage.removeItem(PINS_KEY);
+      else sessionStorage.setItem(PINS_KEY, JSON.stringify(pins));
+    } catch {
+      /* storage unavailable — pins stay view-local */
+    }
+  }, [pins]);
 
   const togglePin = (slug: string) => {
     // Event-time logic only — never inside a state updater (that would
@@ -202,6 +246,40 @@ export function MatrixView({
     const rest = rows.filter((r) => !pins.includes(r.slug));
     return [...pinnedRows, ...rest];
   }, [rows, pins]);
+
+  /** Pinned-set aggregate dossier — every figure for the amber strip in a
+   *  single memo keyed on pins × submarkets. Null when nothing is pinned,
+   *  so the strip mounts/unmounts with pin state. */
+  const pinnedSet = useMemo(() => {
+    const pinned = pins
+      .map((slug) => submarkets.find((s) => s.slug === slug))
+      .filter((s): s is Submarket => Boolean(s));
+    if (pinned.length === 0) return null;
+    const mid = (s: Submarket) =>
+      (s.netBuildableAcresMin + s.netBuildableAcresMax) / 2;
+    const corridorReserve = submarkets.reduce((a, s) => a + mid(s), 0);
+    const combinedReserve = pinned.reduce((a, s) => a + mid(s), 0);
+    const avgCagr =
+      pinned.reduce((a, s) => a + s.projectedCagr, 0) / pinned.length;
+    // Strict < keeps the first-pinned market on depletion-year ties.
+    const earliest = pinned.reduce((a, s) =>
+      s.depletionYear < a.depletionYear ? s : a
+    );
+    return {
+      names: pinned.map((s) => s.name).join(" · "),
+      combinedReserve,
+      corridorShare:
+        corridorReserve > 0 ? (combinedReserve / corridorReserve) * 100 : 0,
+      avgCagr,
+      cagrMin: Math.min(...pinned.map((s) => s.projectedCagr)),
+      cagrMax: Math.max(...pinned.map((s) => s.projectedCagr)),
+      blendedMultiple: Math.pow(1 + avgCagr / 100, 20),
+      earliestYear: earliest.depletionYear,
+      earliestName: earliest.name,
+      runway: earliest.depletionYear - 2026,
+      critical: earliest.depletionYear <= 2032,
+    };
+  }, [pins, submarkets]);
 
   const { toast } = useToast();
 
@@ -370,7 +448,7 @@ export function MatrixView({
               type="button"
               onClick={() => setPins([])}
               title="Unpin all jurisdictions"
-              className="inline-flex h-7 items-center gap-1.5 rounded-md border border-amber-400/60 bg-amber-400/10 px-2.5 text-[12px] font-medium text-amber-700 transition-all hover:bg-amber-400/20 active:scale-[0.97] dark:text-amber-300"
+              className="inline-flex h-7 items-center gap-1.5 rounded-md border border-amber-400/60 bg-amber-400/10 px-2.5 text-[12px] font-medium text-amber-700 transition-all hover:bg-amber-400/20 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60 dark:text-amber-300"
             >
               <Pin className="h-3 w-3" fill="currentColor" aria-hidden />
               {pins.length}/{MAX_PINS} pinned
@@ -389,6 +467,122 @@ export function MatrixView({
           </span>
         </div>
       </div>
+
+      {/* Pinned-set aggregate dossier — mounts only while ≥1 pin exists
+          and unmounts with the last one; all figures derive from the
+          pinnedSet memo above. */}
+      {pinnedSet ? (
+        <section
+          role="region"
+          aria-label="Pinned set aggregate"
+          className="mb-5 rounded-xl border border-amber-400/50 bg-amber-400/[0.06] p-3.5 shadow-sm sm:p-4"
+        >
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-3.5">
+            {/* Left block — pinned markets in pin order */}
+            <div className="min-w-0 flex-auto">
+              <p className="flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-300">
+                <Pin
+                  className="h-3 w-3"
+                  fill="currentColor"
+                  aria-hidden
+                />
+                Pinned set
+              </p>
+              <p className="mt-1 min-w-0 flex-wrap text-[13px] font-semibold leading-snug">
+                {pinnedSet.names}
+              </p>
+            </div>
+
+            {/* Right block — compact aggregate tiles; wrap into a 2×2
+                grid on narrow viewports via flex-wrap + min-w. */}
+            <div className="flex flex-wrap gap-x-5 gap-y-3">
+              <div className="min-w-[130px]">
+                <p className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Combined reserve
+                </p>
+                <p className="mt-0.5 text-[15px] font-semibold leading-tight tabular-nums">
+                  {fmtAcres(Math.round(pinnedSet.combinedReserve))}
+                </p>
+                <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground tabular-nums">
+                  {fmtPct(pinnedSet.corridorShare)} of corridor reserve
+                </p>
+              </div>
+
+              <div className="min-w-[130px] border-l border-amber-400/30 pl-4">
+                <p className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Avg 20-yr CAGR
+                </p>
+                <p
+                  className={cn(
+                    "mt-0.5 text-[15px] font-semibold leading-tight tabular-nums",
+                    CAGR_VALUE_COLORS[cagrTier(pinnedSet.avgCagr)]
+                  )}
+                >
+                  {fmtPct(pinnedSet.avgCagr)}
+                </p>
+                <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground tabular-nums">
+                  band {pinnedSet.cagrMin.toFixed(1)}–{pinnedSet.cagrMax.toFixed(1)}%
+                </p>
+              </div>
+
+              <div className="min-w-[130px] border-l border-amber-400/30 pl-4">
+                <p className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Blended 20-yr multiple
+                </p>
+                <p className="mt-0.5 text-[15px] font-semibold leading-tight tabular-nums">
+                  {pinnedSet.blendedMultiple.toFixed(2)}×
+                </p>
+                <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
+                  compounded 2026–2046
+                </p>
+              </div>
+
+              <div className="min-w-[130px] border-l border-amber-400/30 pl-4">
+                <p className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Earliest depletion
+                </p>
+                <p
+                  className={cn(
+                    "mt-0.5 text-[15px] font-semibold leading-tight tabular-nums",
+                    pinnedSet.critical && "text-rose-600 dark:text-rose-400"
+                  )}
+                >
+                  {pinnedSet.earliestYear}
+                </p>
+                <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground tabular-nums">
+                  {pinnedSet.earliestName} · {pinnedSet.runway} yrs of runway
+                </p>
+              </div>
+            </div>
+
+            {/* Cross-workspace action — preloads the pinned set (≤3 pins,
+                well under the Projections selection cap of 5). */}
+            <button
+              type="button"
+              onClick={() => {
+                // Breadcrumb flag — lets Projections offer "← back to matrix".
+                try {
+                  sessionStorage.setItem("crgnsa-drill-from", "matrix");
+                } catch {
+                  /* storage unavailable — no back-link */
+                }
+                navigate({
+                  view: "projections",
+                  query: `m=${pins.join(",")}&s=1`,
+                });
+              }}
+              title="Open the Projections workspace with the pinned set preloaded"
+              className="group/model inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-amber-400/60 bg-amber-400/10 px-2.5 text-[12px] font-medium text-amber-700 transition-all hover:bg-amber-400/20 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60 dark:text-amber-300"
+            >
+              Model the pinned set
+              <ArrowRight
+                className="h-3.5 w-3.5 shrink-0 transition-transform group-hover/model:translate-x-0.5"
+                aria-hidden
+              />
+            </button>
+          </div>
+        </section>
+      ) : null}
 
       {/* Matrix table — min-width tracks visible columns so hiding
           columns actually tightens the layout instead of leaving
@@ -504,7 +698,7 @@ export function MatrixView({
                               : "Pin to the top of the matrix"
                         }
                         className={cn(
-                          "ml-auto inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-all active:scale-90",
+                          "ml-auto inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-all active:scale-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60",
                           pinned
                             ? "bg-amber-400/20 text-amber-600 hover:bg-amber-400/30 dark:text-amber-400"
                             : "text-muted-foreground/50 hover:bg-muted hover:text-amber-600 dark:hover:text-amber-400"

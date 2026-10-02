@@ -191,7 +191,7 @@ export function GorgeApp({ submarkets, listings, stats }: GorgeAppProps) {
               <MatrixView submarkets={submarkets} navigate={navigate} />
             ) : null}
             {route.view === "projections" ? (
-              <ProjectionsView submarkets={submarkets} />
+              <ProjectionsView submarkets={submarkets} navigate={navigate} />
             ) : null}
             {route.view === "listings" ? (
               <ListingsView

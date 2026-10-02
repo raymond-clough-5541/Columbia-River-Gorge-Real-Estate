@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, type ReactNode } from "react";
-import { animate, useInView } from "framer-motion";
+import { animate, useInView, useReducedMotion } from "framer-motion";
 import { cn } from "@/lib/utils";
 import {
   CAGR_TIER_STYLES,
@@ -34,9 +34,16 @@ export function CountUp({
     formatRef.current = format;
   });
   const inView = useInView(ref, { once: true, margin: "-40px" });
+  // Honor the OS reduced-motion preference: snap to the final value
+  // instead of counting up (round 7 accessibility pass).
+  const reduceMotion = useReducedMotion();
 
   useEffect(() => {
     if (!inView) return;
+    if (reduceMotion) {
+      if (ref.current) ref.current.textContent = formatRef.current(target);
+      return;
+    }
     const controls = animate(0, target, {
       duration,
       ease: [0.16, 1, 0.3, 1],
@@ -45,7 +52,7 @@ export function CountUp({
       },
     });
     return () => controls.stop();
-  }, [inView, target, duration]);
+  }, [inView, target, duration, reduceMotion]);
 
   return (
     <span ref={ref} className={cn("tabular-nums", className)}>

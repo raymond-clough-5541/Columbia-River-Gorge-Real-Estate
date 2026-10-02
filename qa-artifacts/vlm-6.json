@@ -1,0 +1,28 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "(1) **PASS** – The chip’s muted background, left-alignment, and distinct icon clearly establish it as secondary navigation without competing with the primary H1 header.  \n(2) **PASS** – The emerald container provides high contrast against the dark theme, and the bolded link text ensures the notice is immediately legible and scannable.  \n(3) **FAIL (Minor)** – There is a potential accessibility defect where the \"X\" close button on the notice lacks a visible focus ring, and the chart's x-axis labels (2026–2046) may experience text crowding on smaller viewports.",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": 1790916825,
+  "id": "202610021253410c68c03ce1e04efb",
+  "model": "glm-5v-turbo",
+  "object": "chat.completion",
+  "request_id": "202610021253410c68c03ce1e04efb",
+  "usage": {
+    "completion_tokens": 130,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "prompt_tokens": 1763,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "total_tokens": 1893
+  }
+}

@@ -12,6 +12,7 @@ import {
   YAxis,
 } from "recharts";
 import {
+  ArrowLeft,
   BookmarkPlus,
   Download,
   Flame,
@@ -50,6 +51,7 @@ import {
   StateBadge,
 } from "./shared";
 import { MethodologyTrigger } from "./methodology";
+import type { NavigateFn } from "./gorge-app";
 
 const START_YEAR = 2026;
 const MAX_SELECTED = 5;
@@ -234,7 +236,14 @@ function ChartTooltip({
   );
 }
 
-export function ProjectionsView({ submarkets }: { submarkets: Submarket[] }) {
+export function ProjectionsView({
+  submarkets,
+  navigate,
+}: {
+  submarkets: Submarket[];
+  /** Lets the drilldown back-link return to the workspace it came from. */
+  navigate?: NavigateFn;
+}) {
   const defaultSelected = useMemo(
     () =>
       ["hood-river", "the-dalles", "dallesport"].filter((slug) =>
@@ -252,6 +261,8 @@ export function ProjectionsView({ submarkets }: { submarkets: Submarket[] }) {
   const [showScenario, setShowScenario] = useState(true);
   const [depletionAdjusted, setDepletionAdjusted] = useState(false);
   const [sharedNotice, setSharedNotice] = useState(false);
+  /** Workspace the preset was drilled from — surfaces a back-link chip. */
+  const [backTo, setBackTo] = useState<"overview" | "matrix" | null>(null);
 
   useEffect(() => {
     const s = readSharedFromHash();
@@ -265,6 +276,15 @@ export function ProjectionsView({ submarkets }: { submarkets: Submarket[] }) {
     setShowScenario(s.showScenario);
     setDepletionAdjusted(s.depletionAdjusted);
     setSharedNotice(true);
+    // Breadcrumb: overview KPI drilldowns and the matrix pinned-set chip
+    // stamp sessionStorage right before navigating here. Consumed once.
+    try {
+      const from = sessionStorage.getItem("crgnsa-drill-from");
+      if (from === "overview" || from === "matrix") setBackTo(from);
+      sessionStorage.removeItem("crgnsa-drill-from");
+    } catch {
+      /* storage unavailable — no back-link */
+    }
   }, [submarkets]);
 
   const selectedMarkets = submarkets.filter((s) => selected.includes(s.slug));
@@ -460,6 +480,25 @@ export function ProjectionsView({ submarkets }: { submarkets: Submarket[] }) {
 
   return (
     <div className="mx-auto w-full max-w-7xl px-4 pb-16 pt-10 sm:px-6 lg:px-8">
+      {/* Drilldown breadcrumb — "← back to" the workspace that preloaded
+          these inputs. Rendered only when a drill flag was consumed on
+          mount and the parent passed a navigate handler. */}
+      {backTo && navigate ? (
+        <button
+          type="button"
+          onClick={() => navigate({ view: backTo })}
+          className="group mb-3 inline-flex h-7 items-center gap-1.5 rounded-md border bg-card px-2.5 text-[12px] font-medium text-muted-foreground shadow-sm transition-all hover:border-emerald-500/50 hover:text-foreground active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60"
+          aria-label={`Back to ${
+            backTo === "overview" ? "the overview workspace" : "the master matrix"
+          }`}
+        >
+          <ArrowLeft
+            className="h-3.5 w-3.5 transition-transform group-hover:-translate-x-0.5"
+            aria-hidden
+          />
+          Back to {backTo === "overview" ? "overview" : "master matrix"}
+        </button>
+      ) : null}
       <SectionHeader
         eyebrow="Compound Capitalization & Land Depletion Visualizer"
         title="FV = PV · (1 + r)ⁿ, applied to every market in the Gorge"

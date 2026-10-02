@@ -183,6 +183,28 @@ html {
 }
 
 /* ---------------------------------------------------------------- */
+/* Reduced motion — honor the OS preference globally (round 7).       */
+/* CSS-driven transitions/animations collapse to their end state;     */
+/* the JS timelines (scrubber play, CountUp) branch separately.       */
+/* ---------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .recharts-reference-dot {
+    animation: none;
+  }
+}
+
+/* ---------------------------------------------------------------- */
 /* Print stylesheet — investor dossiers on paper                     */
 /* ---------------------------------------------------------------- */
 @media print {

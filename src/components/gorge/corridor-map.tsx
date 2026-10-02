@@ -1,13 +1,16 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Flame, Pause, Play, RotateCcw, TrendingUp } from "lucide-react";
+import { Flame, Landmark, Layers, Pause, Play, RotateCcw, Timer, TrendingUp } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
 import {
   RUNWAY_TIER_STYLES,
   fmtAcres,
+  fmtCurrency,
   fmtPct,
+  futureValue,
+  netBuildableMid,
   runwayTier,
   runwayYears,
   type CorridorStats,
@@ -45,6 +48,8 @@ const T0 = 2026;
 const T1 = 2046;
 /** Wall-clock pace of the play animation: ms per projected year (≈8s sweep). */
 const PLAY_MS_PER_YEAR = 400;
+/** prefers-reduced-motion pace: discrete one-year steps, no tweening. */
+const REDUCED_PLAY_MS_PER_YEAR = 700;
 
 const MODES: { id: MapMode; label: string; icon: typeof TrendingUp; hint: string }[] = [
   { id: "cagr", label: "Appreciation", icon: TrendingUp, hint: "Dot color = 20-yr CAGR tier" },
@@ -98,8 +103,35 @@ export function CorridorMap({
     yearRef.current = timelineYear;
   }, [timelineYear]);
 
+  // prefers-reduced-motion — matched lazily after mount (matchMedia is
+  // browser-only; reading it during render would break SSR/hydration) and
+  // kept live via the change event, so a mid-session preference change
+  // swaps the play loop in place.
+  const [reducedMotion, setReducedMotion] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const sync = () => setReducedMotion(mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
+
   useEffect(() => {
     if (!playing) return;
+    // Reduced motion: one discrete year per tick — no rAF interpolation,
+    // no smooth tweening. Pause/reset/scrub behavior is unchanged.
+    if (reducedMotion) {
+      let year = yearRef.current;
+      const id = window.setInterval(() => {
+        year = Math.min(T1, year + 1);
+        setTimelineYear(year);
+        if (year >= T1) {
+          setPlaying(false);
+          window.clearInterval(id);
+        }
+      }, REDUCED_PLAY_MS_PER_YEAR);
+      return () => window.clearInterval(id);
+    }
     const startedAt = performance.now();
     const from = yearRef.current;
     let raf = 0;
@@ -114,7 +146,7 @@ export function CorridorMap({
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [playing]);
+  }, [playing, reducedMotion]);
 
   const scrub = (year: number) => {
     setPlaying(false);
@@ -134,6 +166,52 @@ export function CorridorMap({
     () => submarkets.filter((s) => timelineYear >= s.depletionYear).length,
     [submarkets, timelineYear]
   );
+
+  /* Year-synced KPI readouts — every figure is recomputed from the
+     submarket data at the scrub year (never hard-coded). */
+  const kpis = useMemo(() => {
+    // 1 · Median projected corridor price as of the scrub year.
+    const projected = submarkets
+      .map((s) => futureValue(s.baselinePrice2026, s.projectedCagr, timelineYear - T0))
+      .sort((a, b) => a - b);
+    const mid = Math.floor(projected.length / 2);
+    const medianPrice =
+      projected.length === 0
+        ? 0
+        : projected.length % 2 === 1
+          ? projected[mid]
+          : (projected[mid - 1] + projected[mid]) / 2;
+    const priceDeltaPct =
+      stats.regionalMedianPrice > 0
+        ? (medianPrice / stats.regionalMedianPrice - 1) * 100
+        : 0;
+
+    // 2 + 3 · Live reserve + next exhaustion, one pass over the corridor.
+    let fullReserve = 0;
+    let liveReserve = 0;
+    let liveMarkets = 0;
+    let next: { year: number; name: string; yearsOut: number; tierColor: string } | null =
+      null;
+    for (const s of submarkets) {
+      const acresMid = netBuildableMid(s);
+      fullReserve += acresMid;
+      if (timelineYear < s.depletionYear) {
+        liveReserve += acresMid;
+        liveMarkets += 1;
+        if (!next || s.depletionYear < next.year) {
+          next = {
+            year: s.depletionYear,
+            name: s.name,
+            yearsOut: s.depletionYear - timelineYear,
+            tierColor: RUNWAY_TIER_STYLES[runwayTier(s.depletionYear - timelineYear)].color,
+          };
+        }
+      }
+    }
+    const reservePct = fullReserve > 0 ? (liveReserve / fullReserve) * 100 : 0;
+
+    return { medianPrice, priceDeltaPct, liveReserve, liveMarkets, reservePct, next };
+  }, [submarkets, stats.regionalMedianPrice, timelineYear]);
 
   const dots = useMemo(
     () =>
@@ -191,6 +269,7 @@ export function CorridorMap({
                 onClick={() => setMode(m.id)}
                 className={cn(
                   "inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-[12px] font-semibold transition-all active:scale-[0.97]",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60 focus-visible:ring-offset-1 focus-visible:ring-offset-background",
                   active
                     ? "bg-zinc-900 text-white shadow-sm dark:bg-emerald-500 dark:text-zinc-950"
                     : "text-muted-foreground hover:text-foreground"
@@ -413,6 +492,84 @@ export function CorridorMap({
         </div>
       </div>
 
+      {/* Year-synced KPI readouts — recomputed from the corridor data at the scrub year */}
+      <div className="mt-4 grid gap-3 sm:grid-cols-3">
+        <div className="rounded-lg border bg-muted/30 p-3">
+          <div className="flex items-center gap-1.5">
+            <Landmark className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+            <MicroLabel className="min-w-0">Median price · as of {timelineYear}</MicroLabel>
+          </div>
+          <p className="mt-2 text-[17px] font-semibold tracking-tight tabular-nums">
+            {fmtCurrency(kpis.medianPrice, { compact: true })}
+          </p>
+          <p
+            className={cn(
+              "mt-0.5 text-[11.5px] tabular-nums",
+              kpis.priceDeltaPct > 0
+                ? "text-emerald-600 dark:text-emerald-400"
+                : "text-muted-foreground"
+            )}
+          >
+            {kpis.priceDeltaPct >= 0 ? "+" : "−"}
+            {Math.abs(Math.round(kpis.priceDeltaPct))}% vs 2026 baseline
+          </p>
+        </div>
+
+        <div className="rounded-lg border bg-muted/30 p-3">
+          <div className="flex items-center gap-1.5">
+            <Layers className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+            <MicroLabel className="min-w-0">Live buildable reserve</MicroLabel>
+          </div>
+          <p className="mt-2 text-[17px] font-semibold tracking-tight tabular-nums">
+            {fmtAcres(kpis.liveReserve)}
+          </p>
+          <p
+            className={cn(
+              "mt-0.5 text-[11.5px] tabular-nums",
+              kpis.liveMarkets === 0
+                ? "text-rose-600 dark:text-rose-400"
+                : "text-muted-foreground"
+            )}
+          >
+            {kpis.liveMarkets === 0
+              ? "corridor fully built out"
+              : `${Math.round(kpis.reservePct)}% of the 2026 reserve`}
+          </p>
+        </div>
+
+        <div className="rounded-lg border bg-muted/30 p-3">
+          <div className="flex items-center gap-1.5">
+            <Timer className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+            <MicroLabel className="min-w-0">Next exhaustion</MicroLabel>
+          </div>
+          <p className="mt-2 text-[17px] font-semibold tracking-tight tabular-nums">
+            {kpis.next ? (
+              <>
+                <span style={{ color: kpis.next.tierColor }}>{kpis.next.year}</span>
+                <span className="font-medium text-muted-foreground">
+                  {" · "}
+                  {kpis.next.name}
+                </span>
+              </>
+            ) : (
+              <span className="text-muted-foreground">—</span>
+            )}
+          </p>
+          <p
+            className={cn(
+              "mt-0.5 text-[11.5px] tabular-nums",
+              kpis.next ? "text-muted-foreground" : "text-rose-600 dark:text-rose-400"
+            )}
+          >
+            {kpis.next
+              ? `${kpis.next.yearsOut} ${
+                  kpis.next.yearsOut === 1 ? "yr" : "yrs"
+                } out from ${timelineYear}`
+              : "every market is past exhaustion"}
+          </p>
+        </div>
+      </div>
+
       {/* Depletion-timeline scrubber — watch the corridor go dark */}
       <div className="mt-4 rounded-xl border bg-muted/30 p-3.5 sm:p-4">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
@@ -424,6 +581,7 @@ export function CorridorMap({
               title={playing ? "Pause" : "Play 2026 → 2046"}
               className={cn(
                 "flex h-8 w-8 items-center justify-center rounded-full border transition-all active:scale-90",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60 focus-visible:ring-offset-1 focus-visible:ring-offset-background",
                 playing
                   ? "bg-zinc-900 text-white dark:bg-emerald-500 dark:text-zinc-950"
                   : "border-zinc-300 text-foreground hover:border-emerald-500/60 hover:text-emerald-600 dark:border-zinc-700 dark:hover:text-emerald-400"
@@ -443,6 +601,7 @@ export function CorridorMap({
               title="Reset to 2026"
               className={cn(
                 "flex h-8 w-8 items-center justify-center rounded-full border transition-all active:scale-90",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60 focus-visible:ring-offset-1 focus-visible:ring-offset-background",
                 timelineYear === T0
                   ? "cursor-default text-muted-foreground/50"
                   : "border-zinc-300 text-foreground hover:border-emerald-500/60 hover:text-emerald-600 dark:border-zinc-700 dark:hover:text-emerald-400"

@@ -261,9 +261,17 @@ export function OverviewView({
     return { medianMarket, topCagr, floorCagr, firstGone, lastGone };
   }, [submarkets]);
 
-  /** Navigate into the projections workspace with a preset query. */
-  const goToProjections = (query: string) =>
+  /** Navigate into the projections workspace with a preset query.
+   *  Leaves a breadcrumb flag so the target can offer a one-click
+   *  "← back to overview" affordance (round 7). */
+  const goToProjections = (query: string) => {
+    try {
+      sessionStorage.setItem("crgnsa-drill-from", "overview");
+    } catch {
+      /* storage unavailable — the back-link simply won't surface */
+    }
     navigate({ view: "projections", query });
+  };
 
   /* KPI sparkline series — 21 annual points, 2026–2046. */
   const SPARK_YEARS = 20;
