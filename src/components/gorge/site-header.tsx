@@ -2,7 +2,8 @@
 
 import { useState, useSyncExternalStore } from "react";
 import { useTheme } from "next-themes";
-import { Menu, Moon, Mountain, Sun, X } from "lucide-react";
+import { motion } from "framer-motion";
+import { Keyboard, Menu, Moon, Mountain, Sun, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Route } from "./gorge-app";
 
@@ -32,8 +33,9 @@ function ThemeToggle() {
     <button
       type="button"
       aria-label="Toggle color theme"
+      title="Toggle theme (t)"
       onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
-      className="flex h-9 w-9 items-center justify-center rounded-lg border bg-card text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+      className="flex h-9 w-9 items-center justify-center rounded-lg border bg-card text-muted-foreground transition-colors hover:bg-accent hover:text-foreground active:scale-95"
     >
       {isDark ? (
         <Sun className="h-4 w-4" aria-hidden />
@@ -44,7 +46,13 @@ function ThemeToggle() {
   );
 }
 
-export function SiteHeader({ route }: { route: Route }) {
+export function SiteHeader({
+  route,
+  onOpenShortcuts,
+}: {
+  route: Route;
+  onOpenShortcuts: () => void;
+}) {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const isActive = (item: (typeof NAV_ITEMS)[number]) => {
@@ -56,7 +64,7 @@ export function SiteHeader({ route }: { route: Route }) {
     <header className="sticky top-0 z-50 w-full border-b bg-background/80 backdrop-blur-md supports-[backdrop-filter]:bg-background/60">
       <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
         <a href="#/" className="group flex items-center gap-2.5">
-          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-zinc-900 text-white dark:bg-emerald-500 dark:text-zinc-950">
+          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-zinc-900 text-white transition-transform group-hover:scale-[1.04] dark:bg-emerald-500 dark:text-zinc-950">
             <Mountain className="h-5 w-5" aria-hidden />
           </span>
           <span className="hidden flex-col leading-tight sm:flex">
@@ -70,24 +78,47 @@ export function SiteHeader({ route }: { route: Route }) {
         </a>
 
         <nav aria-label="Primary" className="hidden items-center gap-1 md:flex">
-          {NAV_ITEMS.map((item) => (
-            <a
-              key={item.hash}
-              href={item.hash}
-              className={cn(
-                "rounded-lg px-3.5 py-2 text-sm font-medium transition-colors",
-                isActive(item)
-                  ? "bg-zinc-900 text-white dark:bg-emerald-500 dark:text-zinc-950"
-                  : "text-muted-foreground hover:bg-accent hover:text-foreground"
-              )}
-              aria-current={isActive(item) ? "page" : undefined}
-            >
-              {item.label}
-            </a>
-          ))}
+          {NAV_ITEMS.map((item) => {
+            const active = isActive(item);
+            return (
+              <a
+                key={item.hash}
+                href={item.hash}
+                className={cn(
+                  "relative rounded-lg px-3.5 py-2 text-sm font-medium transition-colors",
+                  active
+                    ? "text-white dark:text-zinc-950"
+                    : "text-muted-foreground hover:bg-accent hover:text-foreground"
+                )}
+                aria-current={active ? "page" : undefined}
+              >
+                {active ? (
+                  <motion.span
+                    layoutId="nav-active-pill"
+                    transition={{ type: "spring", stiffness: 420, damping: 34 }}
+                    className="absolute inset-0 rounded-lg bg-zinc-900 dark:bg-emerald-500"
+                    aria-hidden
+                  />
+                ) : null}
+                <span className="relative z-10">{item.label}</span>
+              </a>
+            );
+          })}
         </nav>
 
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            aria-label="Keyboard shortcuts"
+            title="Keyboard shortcuts (?)"
+            onClick={onOpenShortcuts}
+            className="hidden h-9 items-center gap-1.5 rounded-lg border bg-card px-2.5 text-[12px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground active:scale-95 sm:flex"
+          >
+            <Keyboard className="h-4 w-4" aria-hidden />
+            <kbd className="rounded border bg-muted px-1 font-mono text-[10.5px] font-semibold">
+              ?
+            </kbd>
+          </button>
           <ThemeToggle />
           <button
             type="button"

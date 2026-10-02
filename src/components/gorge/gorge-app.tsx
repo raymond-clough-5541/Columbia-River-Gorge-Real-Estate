@@ -11,6 +11,7 @@ import { MatrixView } from "./matrix";
 import { ProjectionsView } from "./projections";
 import { ListingsView } from "./listings-view";
 import { SubmarketDetailView } from "./submarket-detail";
+import { KeyboardShortcuts } from "./shortcuts";
 
 /* ---------------------------------------------------------------- */
 /* Hash-based SPA router — keeps the whole experience on the `/`      */
@@ -111,6 +112,7 @@ export function GorgeApp({ submarkets, listings, stats }: GorgeAppProps) {
       ? { view: "overview" }
       : parseHash(window.location.hash)
   );
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
 
   useEffect(() => {
     const onHashChange = () => setRoute(parseHash(window.location.hash));
@@ -135,7 +137,15 @@ export function GorgeApp({ submarkets, listings, stats }: GorgeAppProps) {
 
   return (
     <div className="flex min-h-screen flex-col bg-background">
-      <SiteHeader route={route} />
+      <SiteHeader
+        route={route}
+        onOpenShortcuts={() => setShortcutsOpen(true)}
+      />
+      <KeyboardShortcuts
+        navigate={navigate}
+        helpOpen={shortcutsOpen}
+        onHelpOpenChange={setShortcutsOpen}
+      />
       <main className="flex-1">
         <AnimatePresence mode="wait">
           <motion.div

@@ -6,6 +6,7 @@ import {
   ArrowUp,
   ArrowUpDown,
   ChevronRight,
+  Columns3,
   Download,
   Droplets,
   ExternalLink,
@@ -13,6 +14,14 @@ import {
   Recycle,
   ShieldAlert,
 } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Table,
   TableBody,
@@ -46,6 +55,32 @@ import {
 type SortCol = "net" | "baseline" | "cagr" | "forecast" | "footprint" | "dom";
 type SortDir = "asc" | "desc";
 
+/** Toggleable data columns (Market + row chevron always stay). */
+type ColumnKey =
+  | "jurisdiction"
+  | "footprint"
+  | "net"
+  | "baseline"
+  | "dom"
+  | "cagr"
+  | "forecast"
+  | "sqft"
+  | "depletion";
+
+const COLUMN_LABELS: Record<ColumnKey, string> = {
+  jurisdiction: "Jurisdiction & framework",
+  footprint: "UGB/UGA footprint",
+  net: "Net buildable",
+  baseline: "2026 baseline",
+  dom: "Days on market",
+  cagr: "20-yr CAGR",
+  forecast: "2046 forecast",
+  sqft: "$ / sqft",
+  depletion: "Depletion",
+};
+
+const ALL_COLUMNS = Object.keys(COLUMN_LABELS) as ColumnKey[];
+
 const SORTABLE: { col: SortCol; label: string; className?: string }[] = [
   { col: "footprint", label: "UGB/UGA Footprint" },
   { col: "net", label: "Net Buildable" },
@@ -54,6 +89,18 @@ const SORTABLE: { col: SortCol; label: string; className?: string }[] = [
   { col: "cagr", label: "20-yr CAGR" },
   { col: "forecast", label: "2046 Forecast" },
 ];
+
+const DEFAULT_VISIBLE: Record<ColumnKey, boolean> = {
+  jurisdiction: true,
+  footprint: true,
+  net: true,
+  baseline: true,
+  dom: true,
+  cagr: true,
+  forecast: true,
+  sqft: true,
+  depletion: true,
+};
 
 export function MatrixView({
   submarkets,
@@ -69,6 +116,15 @@ export function MatrixView({
   const [sortCol, setSortCol] = useState<SortCol>("net");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [detailSlug, setDetailSlug] = useState<string | null>(null);
+  const [visibleCols, setVisibleCols] =
+    useState<Record<ColumnKey, boolean>>(DEFAULT_VISIBLE);
+
+  const visibleCount = useMemo(
+    () => ALL_COLUMNS.filter((c) => visibleCols[c]).length,
+    [visibleCols]
+  );
+  const toggleCol = (col: ColumnKey) =>
+    setVisibleCols((v) => ({ ...v, [col]: !v[col] }));
 
   const rows = useMemo(() => {
     const mid = (s: Submarket) =>
@@ -192,15 +248,49 @@ export function MatrixView({
         title="All 11 jurisdictions, one sortable ledger"
         description="Filter by state and jurisdiction type, sort any column, and click a row for the infrastructure dossier — water purveyors, wastewater capacity, and fire-risk constraints that gate every buildable acre."
         action={
-          <button
-            type="button"
-            onClick={exportCsv}
-            disabled={rows.length === 0}
-            className="inline-flex h-9 items-center gap-2 rounded-lg border bg-card px-4 text-[13px] font-medium shadow-sm transition-all hover:border-zinc-400 hover:shadow disabled:cursor-not-allowed disabled:opacity-50 dark:hover:border-zinc-600 active:scale-[0.98]"
-          >
-            <Download className="h-3.5 w-3.5" aria-hidden />
-            Export CSV
-          </button>
+          <div className="flex items-center gap-2">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  aria-label="Toggle column visibility"
+                  className="inline-flex h-9 items-center gap-2 rounded-lg border bg-card px-3.5 text-[13px] font-medium shadow-sm transition-all hover:border-zinc-400 hover:shadow dark:hover:border-zinc-600 active:scale-[0.98]"
+                >
+                  <Columns3 className="h-3.5 w-3.5" aria-hidden />
+                  Columns
+                  <span className="rounded-sm bg-muted px-1.5 text-[11px] font-semibold tabular-nums">
+                    {visibleCount}/{ALL_COLUMNS.length}
+                  </span>
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuLabel className="text-[12px] uppercase tracking-wider">
+                  Visible columns
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                {ALL_COLUMNS.map((col) => (
+                  <DropdownMenuCheckboxItem
+                    key={col}
+                    checked={visibleCols[col]}
+                    onCheckedChange={() => toggleCol(col)}
+                    onSelect={(e) => e.preventDefault()}
+                    className="text-[13px]"
+                  >
+                    {COLUMN_LABELS[col]}
+                  </DropdownMenuCheckboxItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <button
+              type="button"
+              onClick={exportCsv}
+              disabled={rows.length === 0}
+              className="inline-flex h-9 items-center gap-2 rounded-lg border bg-card px-4 text-[13px] font-medium shadow-sm transition-all hover:border-zinc-400 hover:shadow disabled:cursor-not-allowed disabled:opacity-50 dark:hover:border-zinc-600 active:scale-[0.98]"
+            >
+              <Download className="h-3.5 w-3.5" aria-hidden />
+              Export CSV
+            </button>
+          </div>
         }
       />
 
@@ -256,45 +346,71 @@ export function MatrixView({
         </div>
       </div>
 
-      {/* Matrix table */}
+      {/* Matrix table — min-width tracks visible columns so hiding
+          columns actually tightens the layout instead of leaving
+          a fixed-width scroll region. */}
       <div className="overflow-x-auto rounded-xl border bg-card shadow-sm">
-        <Table className="min-w-[1080px]">
+        <Table
+          className="min-w-[640px]"
+          style={{ minWidth: 320 + visibleCount * 95 }}
+        >
           <TableHeader>
             <TableRow className="bg-muted/50 hover:bg-muted/50">
               <TableHead className="w-[210px]">Market</TableHead>
-              <TableHead>Jurisdiction &amp; Framework</TableHead>
-              {SORTABLE.map((c) => (
-                <TableHead key={c.col} className="text-right">
-                  <button
-                    type="button"
-                    onClick={() => toggleSort(c.col)}
-                    className={cn(
-                      "inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-[0.1em] transition-colors",
-                      sortCol === c.col
-                        ? "text-emerald-600 dark:text-emerald-400"
-                        : "hover:text-foreground"
-                    )}
-                    aria-label={`Sort by ${c.label}`}
-                  >
-                    {c.label}
-                    {sortCol === c.col ? (
-                      sortDir === "asc" ? (
-                        <ArrowUp className="h-3 w-3" aria-hidden />
+              {visibleCols.jurisdiction ? (
+                <TableHead>Jurisdiction &amp; Framework</TableHead>
+              ) : null}
+              {SORTABLE.map((c) => {
+                const colKey: ColumnKey | null =
+                  c.col === "net"
+                    ? "net"
+                    : c.col === "baseline"
+                      ? "baseline"
+                      : c.col === "dom"
+                        ? "dom"
+                        : c.col === "cagr"
+                          ? "cagr"
+                          : c.col === "forecast"
+                            ? "forecast"
+                            : "footprint";
+                if (!visibleCols[colKey]) return null;
+                return (
+                  <TableHead key={c.col} className="text-right">
+                    <button
+                      type="button"
+                      onClick={() => toggleSort(c.col)}
+                      className={cn(
+                        "inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-[0.1em] transition-colors",
+                        sortCol === c.col
+                          ? "text-emerald-600 dark:text-emerald-400"
+                          : "hover:text-foreground"
+                      )}
+                      aria-label={`Sort by ${c.label}`}
+                    >
+                      {c.label}
+                      {sortCol === c.col ? (
+                        sortDir === "asc" ? (
+                          <ArrowUp className="h-3 w-3" aria-hidden />
+                        ) : (
+                          <ArrowDown className="h-3 w-3" aria-hidden />
+                        )
                       ) : (
-                        <ArrowDown className="h-3 w-3" aria-hidden />
-                      )
-                    ) : (
-                      <ArrowUpDown className="h-3 w-3 opacity-40" aria-hidden />
-                    )}
-                  </button>
+                        <ArrowUpDown className="h-3 w-3 opacity-40" aria-hidden />
+                      )}
+                    </button>
+                  </TableHead>
+                );
+              })}
+              {visibleCols.sqft ? (
+                <TableHead className="text-right text-[11px] font-semibold uppercase tracking-[0.1em]">
+                  $ / SqFt
                 </TableHead>
-              ))}
-              <TableHead className="text-right text-[11px] font-semibold uppercase tracking-[0.1em]">
-                $ / SqFt
-              </TableHead>
-              <TableHead className="text-right text-[11px] font-semibold uppercase tracking-[0.1em]">
-                Depletion
-              </TableHead>
+              ) : null}
+              {visibleCols.depletion ? (
+                <TableHead className="text-right text-[11px] font-semibold uppercase tracking-[0.1em]">
+                  Depletion
+                </TableHead>
+              ) : null}
               <TableHead className="w-10" aria-label="Row actions" />
             </TableRow>
           </TableHeader>
@@ -307,7 +423,7 @@ export function MatrixView({
                   key={s.slug}
                   onClick={() => setDetailSlug(s.slug)}
                   className={cn(
-                    "cursor-pointer transition-colors",
+                    "cursor-pointer transition-colors hover:bg-muted/40",
                     isActive && "bg-emerald-500/[0.06]"
                   )}
                   aria-label={`Open infrastructure dossier for ${s.name}, ${s.state}`}
@@ -319,44 +435,62 @@ export function MatrixView({
                     </div>
                     <p className="mt-0.5 text-[12px] text-muted-foreground">{s.county}</p>
                   </TableCell>
-                  <TableCell className="py-3.5">
-                    <div className="flex flex-col items-start gap-1.5">
-                      <span className="text-[13px]">{s.jurisdictionType}</span>
-                      <FrameworkBadge framework={s.regulatoryFramework} />
-                    </div>
-                  </TableCell>
-                  <TableCell className="py-3.5 text-right text-[13px] tabular-nums">
-                    {fmtAcres(s.totalFootprintAcres)}
-                  </TableCell>
-                  <TableCell className="py-3.5 text-right text-[13px] font-medium tabular-nums">
-                    <span className="block text-[13px] text-muted-foreground">
-                      {fmtAcres(s.grossVacantAcres)} gross
-                    </span>
-                    {fmtAcres(s.netBuildableAcresMin)}–{fmtAcres(s.netBuildableAcresMax)}
-                    <span className="block text-[11px] text-muted-foreground">
-                      mid {fmtAcres(netMid)}
-                    </span>
-                  </TableCell>
-                  <TableCell className="py-3.5 text-right text-[13px] font-semibold tabular-nums">
-                    {fmtCurrency(s.baselinePrice2026, { compact: true })}
-                  </TableCell>
-                  <TableCell className="py-3.5 text-right text-[13px] tabular-nums">
-                    {s.daysOnMarketMin}–{s.daysOnMarketMax}
-                  </TableCell>
-                  <TableCell className="py-3.5 text-right">
-                    <CagrBadge cagr={s.projectedCagr} showTier={false} />
-                  </TableCell>
-                  <TableCell className="py-3.5 text-right text-[13px] font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
-                    {fmtCurrency(s.projectedPrice2046Min, { compact: true })}
-                    <span className="text-muted-foreground"> – </span>
-                    {fmtCurrency(s.projectedPrice2046Max, { compact: true })}
-                  </TableCell>
-                  <TableCell className="py-3.5 text-right text-[13px] tabular-nums text-muted-foreground">
-                    ${Math.round(s.pricePerSqftMin)}–${Math.round(s.pricePerSqftMax)}
-                  </TableCell>
-                  <TableCell className="py-3.5 text-right">
-                    <DepletionBadge year={s.depletionYear} />
-                  </TableCell>
+                  {visibleCols.jurisdiction ? (
+                    <TableCell className="py-3.5">
+                      <div className="flex flex-col items-start gap-1.5">
+                        <span className="text-[13px]">{s.jurisdictionType}</span>
+                        <FrameworkBadge framework={s.regulatoryFramework} />
+                      </div>
+                    </TableCell>
+                  ) : null}
+                  {visibleCols.footprint ? (
+                    <TableCell className="py-3.5 text-right text-[13px] tabular-nums">
+                      {fmtAcres(s.totalFootprintAcres)}
+                    </TableCell>
+                  ) : null}
+                  {visibleCols.net ? (
+                    <TableCell className="py-3.5 text-right text-[13px] font-medium tabular-nums">
+                      <span className="block text-[13px] text-muted-foreground">
+                        {fmtAcres(s.grossVacantAcres)} gross
+                      </span>
+                      {fmtAcres(s.netBuildableAcresMin)}–{fmtAcres(s.netBuildableAcresMax)}
+                      <span className="block text-[11px] text-muted-foreground">
+                        mid {fmtAcres(netMid)}
+                      </span>
+                    </TableCell>
+                  ) : null}
+                  {visibleCols.baseline ? (
+                    <TableCell className="py-3.5 text-right text-[13px] font-semibold tabular-nums">
+                      {fmtCurrency(s.baselinePrice2026, { compact: true })}
+                    </TableCell>
+                  ) : null}
+                  {visibleCols.dom ? (
+                    <TableCell className="py-3.5 text-right text-[13px] tabular-nums">
+                      {s.daysOnMarketMin}–{s.daysOnMarketMax}
+                    </TableCell>
+                  ) : null}
+                  {visibleCols.cagr ? (
+                    <TableCell className="py-3.5 text-right">
+                      <CagrBadge cagr={s.projectedCagr} showTier={false} />
+                    </TableCell>
+                  ) : null}
+                  {visibleCols.forecast ? (
+                    <TableCell className="py-3.5 text-right text-[13px] font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
+                      {fmtCurrency(s.projectedPrice2046Min, { compact: true })}
+                      <span className="text-muted-foreground"> – </span>
+                      {fmtCurrency(s.projectedPrice2046Max, { compact: true })}
+                    </TableCell>
+                  ) : null}
+                  {visibleCols.sqft ? (
+                    <TableCell className="py-3.5 text-right text-[13px] tabular-nums text-muted-foreground">
+                      ${Math.round(s.pricePerSqftMin)}–${Math.round(s.pricePerSqftMax)}
+                    </TableCell>
+                  ) : null}
+                  {visibleCols.depletion ? (
+                    <TableCell className="py-3.5 text-right">
+                      <DepletionBadge year={s.depletionYear} />
+                    </TableCell>
+                  ) : null}
                   <TableCell className="py-3.5 text-right">
                     <ChevronRight className="h-4 w-4 text-muted-foreground" aria-hidden />
                   </TableCell>
@@ -365,7 +499,10 @@ export function MatrixView({
             })}
             {rows.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={11} className="py-10 text-center text-sm text-muted-foreground">
+                <TableCell
+                  colSpan={2 + visibleCount}
+                  className="py-10 text-center text-sm text-muted-foreground"
+                >
                   No jurisdictions match the current filters.
                 </TableCell>
               </TableRow>

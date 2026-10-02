@@ -15,6 +15,7 @@ import {
   Ruler,
   Search,
   Sparkles,
+  Star,
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -28,6 +29,8 @@ import {
 } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
+import { useToast } from "@/hooks/use-toast";
+import { toggleWatchlist, useWatchlist } from "@/lib/watchlist-store";
 import {
   fmtAcres,
   fmtCurrency,
@@ -60,6 +63,60 @@ interface Filters {
   maxPrice: number;
   minAcreage: number;
   sort: string;
+  starredOnly: boolean;
+}
+
+/** Star / unstar toggle with toast feedback. Shared by cards + dialogs. */
+export function WatchstarButton({
+  listing,
+  className,
+  size = "md",
+  variant = "overlay",
+}: {
+  listing: PropertyListing;
+  className?: string;
+  size?: "sm" | "md";
+  /** "overlay" sits on photo backdrops, "plain" on card backgrounds. */
+  variant?: "overlay" | "plain";
+}) {
+  const watched = useWatchlist().includes(listing.id);
+  const { toast } = useToast();
+  const dims = size === "sm" ? "h-3.5 w-3.5" : "h-4 w-4";
+  const unwatched =
+    variant === "overlay"
+      ? "border-zinc-950/30 bg-zinc-950/60 text-zinc-200 hover:bg-zinc-950/85 hover:text-amber-300"
+      : "bg-card text-muted-foreground hover:border-amber-400/60 hover:text-amber-500";
+  return (
+    <button
+      type="button"
+      aria-label={watched ? `Remove ${listing.title} from watchlist` : `Add ${listing.title} to watchlist`}
+      aria-pressed={watched}
+      title={watched ? "Remove from watchlist" : "Add to watchlist"}
+      onClick={(e) => {
+        e.stopPropagation();
+        const now = toggleWatchlist(listing.id);
+        toast({
+          title: now ? "Added to watchlist" : "Removed from watchlist",
+          description: listing.title,
+        });
+      }}
+      className={cn(
+        "inline-flex items-center justify-center rounded-md border backdrop-blur-sm transition-all active:scale-90",
+        size === "sm" ? "h-7 w-7" : "h-8 w-8",
+        watched
+          ? "border-amber-400/60 bg-amber-400/20 text-amber-500 hover:bg-amber-400/30"
+          : unwatched,
+        className
+      )}
+    >
+      <Star
+        className={dims}
+        fill={watched ? "currentColor" : "none"}
+        strokeWidth={2}
+        aria-hidden
+      />
+    </button>
+  );
 }
 
 function ListingCard({
@@ -73,10 +130,17 @@ function ListingCard({
   const isLand = listing.propertyType === "Land Parcel" || listing.squareFeet === 0;
   const photoCount = getGalleryImages(listing).length;
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onOpen}
-      className="group flex flex-col overflow-hidden rounded-xl border bg-card text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md"
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onOpen();
+        }
+      }}
+      className="group flex cursor-pointer flex-col overflow-hidden rounded-xl border bg-card text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60"
       aria-label={`View ${listing.title}`}
     >
       <div className="relative aspect-[4/3] overflow-hidden">
@@ -91,18 +155,21 @@ function ListingCard({
         <span className="absolute bottom-2.5 left-3 text-lg font-semibold tabular-nums text-white drop-shadow">
           {fmtCurrency(listing.price, { compact: true })}
         </span>
-        {listing.status !== "Active" ? (
-          <span
-            className={cn(
-              "absolute right-2.5 top-2.5 rounded-sm px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest",
-              listing.status === "New"
-                ? "bg-emerald-500 text-zinc-950"
-                : "bg-amber-500 text-zinc-950"
-            )}
-          >
-            {listing.status}
-          </span>
-        ) : null}
+        <div className="absolute right-2.5 top-2.5 flex flex-col items-end gap-1.5">
+          {listing.status !== "Active" ? (
+            <span
+              className={cn(
+                "rounded-sm px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest",
+                listing.status === "New"
+                  ? "bg-emerald-500 text-zinc-950"
+                  : "bg-amber-500 text-zinc-950"
+              )}
+            >
+              {listing.status}
+            </span>
+          ) : null}
+          <WatchstarButton listing={listing} className="opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100" />
+        </div>
         <span className="absolute left-2.5 top-2.5 inline-flex items-center gap-1 rounded-sm bg-zinc-950/70 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-white backdrop-blur-sm">
           <TypeIcon className="h-3 w-3" aria-hidden />
           {listing.propertyType}
@@ -162,7 +229,7 @@ function ListingCard({
           ) : null}
         </div>
       </div>
-    </button>
+    </div>
   );
 }
 
@@ -182,7 +249,9 @@ export function ListingsView({
     maxPrice: MAX_PRICE_CEILING,
     minAcreage: 0,
     sort: "price-desc",
+    starredOnly: false,
   });
+  const watchlist = useWatchlist();
   const [results, setResults] = useState<PropertyListing[]>(listings);
   const [loading, setLoading] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
@@ -228,6 +297,15 @@ export function ListingsView({
     listings.find((l) => l.id === detailId) ??
     results.find((l) => l.id === detailId) ??
     null;
+
+  // Watchlist-only mode is applied client-side over the API results.
+  const visible = useMemo(
+    () =>
+      filters.starredOnly
+        ? results.filter((l) => watchlist.includes(l.id))
+        : results,
+    [results, filters.starredOnly, watchlist]
+  );
 
   const types = useMemo(
     () => Array.from(new Set(listings.map((l) => l.propertyType))),
@@ -397,8 +475,8 @@ export function ListingsView({
           </div>
         </div>
 
-        <div className="mt-3 flex items-center justify-between border-t pt-3">
-          <p className="text-[13px] text-muted-foreground tabular-nums">
+        <div className="mt-3 flex items-center justify-between gap-3 border-t pt-3">
+          <p className="flex items-center gap-3 text-[13px] text-muted-foreground tabular-nums">
             {loading ? (
               <span className="inline-flex items-center gap-2">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
@@ -406,8 +484,34 @@ export function ListingsView({
               </span>
             ) : (
               <>
-                <span className="font-semibold text-foreground">{results.length}</span>{" "}
-                listings match
+                <span>
+                  <span className="font-semibold text-foreground">{visible.length}</span>{" "}
+                  listing{visible.length === 1 ? "" : "s"} match
+                </span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setFilters((f) => ({ ...f, starredOnly: !f.starredOnly }))
+                  }
+                  aria-pressed={filters.starredOnly}
+                  className={cn(
+                    "inline-flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-[12px] font-medium transition-all active:scale-[0.97]",
+                    filters.starredOnly
+                      ? "border-amber-400/60 bg-amber-400/15 text-amber-700 dark:text-amber-300"
+                      : "text-muted-foreground hover:border-zinc-400 hover:text-foreground dark:hover:border-zinc-600",
+                    watchlist.length === 0 && !filters.starredOnly && "opacity-60"
+                  )}
+                >
+                  <Star
+                    className="h-3.5 w-3.5"
+                    fill={filters.starredOnly ? "currentColor" : "none"}
+                    aria-hidden
+                  />
+                  Watchlist
+                  <span className="rounded-sm bg-muted px-1 text-[11px] font-semibold tabular-nums">
+                    {watchlist.length}
+                  </span>
+                </button>
               </>
             )}
           </p>
@@ -434,7 +538,7 @@ export function ListingsView({
           loading && "pointer-events-none opacity-60"
         )}
       >
-        {results.map((l) => (
+        {visible.map((l) => (
           <ListingCard
             key={l.id}
             listing={l}
@@ -443,11 +547,17 @@ export function ListingsView({
         ))}
       </div>
 
-      {results.length === 0 && !loading ? (
+      {visible.length === 0 && !loading ? (
         <div className="rounded-xl border border-dashed p-12 text-center">
-          <p className="text-sm font-medium">No listings match those filters.</p>
+          <p className="text-sm font-medium">
+            {filters.starredOnly
+              ? "Your watchlist is empty — or nothing starred matches the other filters."
+              : "No listings match those filters."}
+          </p>
           <p className="mt-1 text-[13px] text-muted-foreground">
-            Try widening the price ceiling or clearing the search.
+            {filters.starredOnly
+              ? "Star listings from any card or dossier to build a personal shortlist."
+              : "Try widening the price ceiling or clearing the search."}
           </p>
           <Button
             variant="outline"
@@ -460,6 +570,7 @@ export function ListingsView({
                 maxPrice: MAX_PRICE_CEILING,
                 minAcreage: 0,
                 sort: "price-desc",
+                starredOnly: false,
               })
             }
           >

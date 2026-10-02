@@ -21,6 +21,7 @@ import {
 } from "@/lib/gorge";
 import type { NavigateFn } from "./gorge-app";
 import { FinancingLab } from "./financing-lab";
+import { WatchstarButton } from "./listings-view";
 import { KeyStatRow, MicroLabel, StateBadge } from "./shared";
 
 /* ---------------------------------------------------------------- */
@@ -162,8 +163,11 @@ export function ListingDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="thin-scroll max-h-[92vh] w-full overflow-y-auto sm:max-w-2xl">
         <DialogHeader className="text-left">
-          <DialogTitle className="pr-8 text-xl leading-tight tracking-tight">
-            {listing.title}
+          <DialogTitle className="flex flex-wrap items-center justify-between gap-2 pr-8 text-xl leading-tight tracking-tight">
+            <span>{listing.title}</span>
+            <span data-print="hide">
+              <WatchstarButton listing={listing} size="sm" variant="plain" />
+            </span>
           </DialogTitle>
           <DialogDescription className="flex flex-wrap items-center gap-2 pt-1">
             {sm ? (

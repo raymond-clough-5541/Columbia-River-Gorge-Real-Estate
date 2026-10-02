@@ -1,7 +1,16 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Calculator, Info, Landmark, PiggyBank } from "lucide-react";
+import {
+  CartesianGrid,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
+import { Calculator, ChevronDown, Info, Landmark, PiggyBank, Scale } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
 import {
@@ -31,6 +40,7 @@ export function FinancingLab({ listing }: { listing: PropertyListing }) {
   const [downPct, setDownPct] = useState(defaultDown);
   const [rate, setRate] = useState(isLand ? 8.5 : 6.5);
   const [term, setTerm] = useState<(typeof TERMS)[number]>(30);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
 
   const state = listing.submarket?.state ?? "OR";
 
@@ -53,6 +63,40 @@ export function FinancingLab({ listing }: { listing: PropertyListing }) {
     const leverageMultiple =
       down > 0 && equity2046 > 0 ? equity2046 / down : 0;
 
+    // Yearly amortization schedule + the note's "half-life": the first
+    // year-end balance below 50% of the original note.
+    const schedule: {
+      year: number;
+      principalY: number;
+      interestY: number;
+      cumInterest: number;
+      balance: number;
+      value: number;
+      halfWay: boolean;
+    }[] = [];
+    let prev = loan;
+    let cumInterest = 0;
+    let halfLifeYear: number | null = null;
+    for (let y = 1; y <= term; y++) {
+      const balance = remainingBalance(loan, rate, term, y * 12);
+      const principalY = prev - balance;
+      const interestY = pi * 12 - principalY;
+      cumInterest += interestY;
+      const halfWay =
+        halfLifeYear === null && balance <= loan / 2 && balance > 0;
+      if (halfWay) halfLifeYear = y;
+      schedule.push({
+        year: 2026 + y,
+        principalY,
+        interestY,
+        cumInterest,
+        balance,
+        value: futureValue(price, cagr, y),
+        halfWay,
+      });
+      prev = balance;
+    }
+
     return {
       down,
       loan,
@@ -66,6 +110,8 @@ export function FinancingLab({ listing }: { listing: PropertyListing }) {
       equity2046,
       leverageMultiple,
       cagr,
+      schedule,
+      halfLifeYear,
     };
   }, [listing.price, listing.submarket?.projectedCagr, downPct, rate, term, state, isLand]);
 
@@ -241,6 +287,196 @@ export function FinancingLab({ listing }: { listing: PropertyListing }) {
             — appreciation accrues to the levered position while the note
             amortizes.
           </p>
+        ) : null}
+      </div>
+
+      {/* Amortization schedule — collapsible deep dive */}
+      <div className="mt-3 overflow-hidden rounded-lg border bg-card">
+        <button
+          type="button"
+          onClick={() => setScheduleOpen((v) => !v)}
+          aria-expanded={scheduleOpen}
+          className="flex w-full items-center justify-between gap-3 px-3.5 py-3 text-left transition-colors hover:bg-accent/50"
+        >
+          <span className="flex items-center gap-2">
+            <Scale className="h-4 w-4 text-muted-foreground" aria-hidden />
+            <span className="text-[12px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+              Amortization schedule
+            </span>
+          </span>
+          <span className="flex items-center gap-2.5">
+            <span className="text-[11px] text-muted-foreground tabular-nums">
+              {calc.halfLifeYear !== null
+                ? `balance crosses 50% of note in ${calc.halfLifeYear}`
+                : `${term}-yr note`}
+            </span>
+            <ChevronDown
+              className={cn(
+                "h-4 w-4 text-muted-foreground transition-transform duration-200",
+                scheduleOpen && "rotate-180"
+              )}
+              aria-hidden
+            />
+          </span>
+        </button>
+
+        {scheduleOpen ? (
+          <div className="border-t px-3.5 pb-4 pt-3.5">
+            {/* Crossover chart: appreciating value vs amortizing balance */}
+            <div className="h-[170px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart
+                  data={calc.schedule}
+                  margin={{ top: 5, right: 8, bottom: 0, left: 0 }}
+                >
+                  <CartesianGrid
+                    strokeDasharray="3 3"
+                    className="stroke-border"
+                    vertical={false}
+                  />
+                  <XAxis
+                    dataKey="year"
+                    tick={{ fontSize: 10.5 }}
+                    tickLine={false}
+                    axisLine={{ strokeWidth: 0 }}
+                    interval="preserveStartEnd"
+                    minTickGap={28}
+                    className="text-muted-foreground"
+                  />
+                  <YAxis
+                    tick={{ fontSize: 10.5 }}
+                    tickLine={false}
+                    axisLine={false}
+                    width={48}
+                    tickFormatter={(v: number) =>
+                      fmtCurrency(v, { compact: true })
+                    }
+                    className="text-muted-foreground"
+                  />
+                  <Tooltip
+                    cursor={{ stroke: "var(--border)", strokeDasharray: "4 4" }}
+                    formatter={(value: number, name: string) => [
+                      fmtCurrency(value),
+                      name === "value"
+                        ? "Market value"
+                        : "Loan balance",
+                    ]}
+                    labelFormatter={(y) => `${y}`}
+                    contentStyle={{
+                      borderRadius: "0.5rem",
+                      border: "1px solid var(--border)",
+                      background: "var(--popover)",
+                      color: "var(--popover-foreground)",
+                      fontSize: "12px",
+                    }}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey={(d: { balance: number }) =>
+                      Math.round(d.balance)
+                    }
+                    stroke="#a1a1aa"
+                    strokeWidth={1.75}
+                    strokeDasharray="5 4"
+                    dot={false}
+                    name="balance"
+                    isAnimationActive={false}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey={(d: { value: number }) => Math.round(d.value)}
+                    stroke="#10b981"
+                    strokeWidth={2.25}
+                    dot={false}
+                    name="value"
+                    isAnimationActive={false}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+            <p className="mt-1.5 flex flex-wrap items-center gap-x-3.5 gap-y-1 text-[10.5px] text-muted-foreground">
+              <span className="inline-flex items-center gap-1.5">
+                <span className="h-0.5 w-4 rounded bg-emerald-500" aria-hidden />
+                Value at {fmtPct(calc.cagr)} market CAGR
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <span
+                  className="h-0.5 w-4 rounded bg-zinc-400"
+                  style={{
+                    backgroundImage:
+                      "repeating-linear-gradient(90deg, #a1a1aa 0 5px, transparent 5px 9px)",
+                  }}
+                  aria-hidden
+                />
+                Amortizing balance
+              </span>
+              <span className="ml-auto italic">
+                the widening wedge is the equity build
+              </span>
+            </p>
+
+            {/* Yearly table */}
+            <div className="thin-scroll mt-3 max-h-64 overflow-y-auto rounded-md border">
+              <table className="w-full text-[12px]">
+                <thead className="sticky top-0 z-10 bg-muted/95 backdrop-blur-sm">
+                  <tr className="text-[10.5px] uppercase tracking-wider text-muted-foreground">
+                    <th className="px-2.5 py-2 text-left font-semibold">Year</th>
+                    <th className="px-2.5 py-2 text-right font-semibold">
+                      Principal
+                    </th>
+                    <th className="px-2.5 py-2 text-right font-semibold">
+                      Interest
+                    </th>
+                    <th className="px-2.5 py-2 text-right font-semibold">
+                      Cum. interest
+                    </th>
+                    <th className="px-2.5 py-2 text-right font-semibold">
+                      Balance
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="tabular-nums">
+                  {calc.schedule.map((row) => (
+                    <tr
+                      key={row.year}
+                      className={cn(
+                        "border-t transition-colors hover:bg-muted/40",
+                        row.halfWay && "bg-emerald-500/[0.07]"
+                      )}
+                    >
+                      <td className="px-2.5 py-1.5 text-left font-medium">
+                        {row.year}
+                        {row.halfWay ? (
+                          <span className="ml-1.5 rounded-sm bg-emerald-500/15 px-1 py-px text-[9px] font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
+                            half-way
+                          </span>
+                        ) : null}
+                      </td>
+                      <td className="px-2.5 py-1.5 text-right text-emerald-700 dark:text-emerald-400">
+                        {fmtCurrency(Math.round(row.principalY))}
+                      </td>
+                      <td className="px-2.5 py-1.5 text-right text-rose-600 dark:text-rose-400">
+                        {fmtCurrency(Math.round(row.interestY))}
+                      </td>
+                      <td className="px-2.5 py-1.5 text-right text-muted-foreground">
+                        {fmtCurrency(Math.round(row.cumInterest))}
+                      </td>
+                      <td className="px-2.5 py-1.5 text-right font-medium">
+                        {row.balance > 0
+                          ? fmtCurrency(Math.round(row.balance))
+                          : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="mt-2 text-[10.5px] leading-relaxed text-muted-foreground">
+              Principal &amp; interest only — taxes, insurance, and any WUI
+              riders stack on top. The interest column front-loads hard in
+              the early years; extra principal payments attack it directly.
+            </p>
+          </div>
         ) : null}
       </div>
 
