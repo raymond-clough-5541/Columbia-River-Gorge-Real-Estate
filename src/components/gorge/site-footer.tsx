@@ -1,10 +1,19 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { Mountain, ShieldAlert } from "lucide-react";
 import { MethodologyTrigger } from "./methodology";
 import type { NavigateFn, Route } from "./gorge-app";
 
-export function SiteFooter({ navigate }: { navigate: NavigateFn }) {
+export function SiteFooter({
+  navigate,
+  pulse = null,
+}: {
+  navigate: NavigateFn;
+  /** Round 16 — the Market Pulse ticker band, injected by the shell so it
+   *  stays scoped to the active region's submarkets. */
+  pulse?: ReactNode;
+}) {
   const navLinks: { label: string; route: Route }[] = [
     { label: "Executive Overview", route: { view: "overview" } },
     { label: "Master Matrix", route: { view: "matrix" } },
@@ -14,6 +23,7 @@ export function SiteFooter({ navigate }: { navigate: NavigateFn }) {
   ];
   return (
     <footer className="mt-auto border-t bg-zinc-50 dark:bg-zinc-900/50">
+      {pulse}
       <div className="mx-auto w-full max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
         <div className="flex flex-col gap-8 md:flex-row md:items-start md:justify-between">
           <div className="max-w-md">
@@ -41,7 +51,7 @@ export function SiteFooter({ navigate }: { navigate: NavigateFn }) {
                   key={item.label}
                   type="button"
                   onClick={() => navigate(item.route)}
-                  className="text-left text-muted-foreground transition-colors hover:text-foreground"
+                  className="-my-1.5 rounded-md py-1.5 text-left text-muted-foreground transition-colors hover:text-foreground"
                 >
                   {item.label}
                 </button>

@@ -17,6 +17,7 @@ import { regionContent } from "@/lib/region-content";
 import { pushRecent } from "@/lib/recents";
 import { SiteHeader } from "./site-header";
 import { SiteFooter } from "./site-footer";
+import { MarketPulse } from "./market-pulse";
 import { OverviewView } from "./overview";
 import { MatrixView } from "./matrix";
 import { ProjectionsView } from "./projections";
@@ -279,7 +280,7 @@ export function GorgeApp({
   }, [route]);
 
   return (
-    <div className="flex min-h-screen flex-col bg-background">
+    <div className="flex min-h-dvh flex-col bg-background">
       <SiteHeader
         route={route}
         regions={regions}
@@ -362,7 +363,16 @@ export function GorgeApp({
         </AnimatePresence>
       </main>
       <BackToTop />
-      <SiteFooter navigate={scopedNavigate} />
+      <SiteFooter
+        navigate={scopedNavigate}
+        pulse={
+          <MarketPulse
+            submarkets={regionSubmarkets}
+            navigate={scopedNavigate}
+            scopeWord={content.scopeWord}
+          />
+        }
+      />
     </div>
   );
 }

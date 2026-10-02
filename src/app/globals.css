@@ -183,6 +183,30 @@ html {
 }
 
 /* ---------------------------------------------------------------- */
+/* Round 16 — Market Pulse ticker (footer band).                     */
+/* Compositor-only loop: the track holds two copies of the item      */
+/* list; translating -50% of its own width yields a seamless cycle.  */
+/* Pauses on hover AND on keyboard focus-within so a focused item    */
+/* can't scroll out from under the caret.                            */
+/* ---------------------------------------------------------------- */
+@keyframes ticker-scroll {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+.market-pulse-track {
+  animation: ticker-scroll var(--ticker-duration, 45s) linear infinite;
+  will-change: transform;
+}
+.market-pulse:hover .market-pulse-track,
+.market-pulse:focus-within .market-pulse-track {
+  animation-play-state: paused;
+}
+
+/* ---------------------------------------------------------------- */
 /* Reduced motion — honor the OS preference globally (round 7).       */
 /* CSS-driven transitions/animations collapse to their end state;     */
 /* the JS timelines (scrubber play, CountUp) branch separately.       */
@@ -201,6 +225,15 @@ html {
   }
   .recharts-reference-dot {
     animation: none;
+  }
+  /* Market Pulse under reduced motion: no loop — the band becomes a
+     static, horizontally scrollable strip (touch/wheel/magnifier users
+     can still reach every item). */
+  .market-pulse-track {
+    animation: none !important;
+  }
+  .market-pulse > div {
+    overflow-x: auto;
   }
 }
 

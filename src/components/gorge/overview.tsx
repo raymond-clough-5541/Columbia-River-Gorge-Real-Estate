@@ -95,25 +95,25 @@ function Hero({
           <button
             type="button"
             onClick={() => navigate({ view: "projections" })}
-            className="inline-flex h-11 items-center gap-2 rounded-lg border border-white/20 bg-white/10 px-5 text-sm font-semibold text-white backdrop-blur-sm transition-colors hover:bg-white/20"
+            className="inline-flex h-11 items-center gap-2 rounded-lg border border-white/30 bg-white/15 px-5 text-sm font-semibold text-white shadow-lg shadow-zinc-950/30 backdrop-blur-sm transition-colors hover:border-white/40 hover:bg-white/20 focus-visible:border-white/60"
           >
             <LineChart className="h-4 w-4" aria-hidden />
             {content.ctaSecondary}
           </button>
         </div>
 
-        <dl className="mt-10 grid max-w-3xl grid-cols-2 gap-px overflow-hidden rounded-xl border border-white/10 bg-white/10 backdrop-blur-md sm:grid-cols-4">
+        <dl className="mt-10 grid max-w-3xl grid-cols-2 gap-px overflow-hidden rounded-xl border border-white/15 bg-white/10 shadow-lg shadow-zinc-950/20 backdrop-blur-md sm:grid-cols-4">
           {[
             { k: "Jurisdictions", v: String(stats.submarketCount) },
             { k: "Net buildable", v: `${fmtAcres(stats.totalNetBuildableMid)} band` },
             { k: "Median price 2026", v: fmtCurrency(stats.regionalMedianPrice, { compact: true }) },
             { k: "Avg 20-yr CAGR", v: fmtPct(stats.averageCagr) },
           ].map((s) => (
-            <div key={s.k} className="bg-zinc-950/60 px-4 py-3.5">
-              <dt className="text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-400">
+            <div key={s.k} className="bg-zinc-950/70 px-4 py-3.5">
+              <dt className="text-[11px] font-semibold uppercase tracking-[0.14em] text-zinc-300">
                 {s.k}
               </dt>
-              <dd className="mt-1 text-sm font-semibold tabular-nums text-white">
+              <dd className="mt-1 text-[15px] font-semibold tabular-nums text-white">
                 {s.v}
               </dd>
             </div>
