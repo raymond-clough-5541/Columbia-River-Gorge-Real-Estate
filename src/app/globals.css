@@ -142,3 +142,183 @@
 .thin-scroll::-webkit-scrollbar-thumb:hover {
   background: color-mix(in oklab, currentColor 35%, transparent);
 }
+
+/* ---------------------------------------------------------------- */
+/* Editorial details                                                 */
+/* ---------------------------------------------------------------- */
+
+/* Emerald-tinted text selection across the app. */
+::selection {
+  background: color-mix(in oklab, #10b981 26%, transparent);
+}
+
+/* Refined focus-visible ring for keyboard navigation. */
+:focus-visible {
+  outline: 2px solid color-mix(in oklab, #10b981 70%, transparent);
+  outline-offset: 2px;
+}
+
+/* Smooth anchor scrolling with header clearance. */
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: 5rem;
+}
+
+/* Depletion-milestone dots pop in after the curves draw (Recharts
+   handles the line draw-in natively via isAnimationActive). */
+.recharts-reference-dot {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: dot-pop 0.5s cubic-bezier(0.16, 1, 0.3, 1) 1.05s backwards;
+}
+@keyframes dot-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* ---------------------------------------------------------------- */
+/* Print stylesheet — investor dossiers on paper                     */
+/* ---------------------------------------------------------------- */
+@media print {
+  /* Force light palette regardless of active theme. */
+  :root,
+  .dark {
+    --background: oklch(1 0 0) !important;
+    --foreground: oklch(0.145 0 0) !important;
+    --card: oklch(1 0 0) !important;
+    --card-foreground: oklch(0.145 0 0) !important;
+    --popover: oklch(1 0 0) !important;
+    --popover-foreground: oklch(0.145 0 0) !important;
+    --muted: oklch(0.97 0 0) !important;
+    --muted-foreground: oklch(0.4 0 0) !important;
+    --border: oklch(0.85 0 0) !important;
+    --accent: oklch(0.95 0 0) !important;
+  }
+
+  @page {
+    margin: 14mm 12mm;
+  }
+
+  body {
+    background: white !important;
+    color: black !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Kill motion: transforms, shadows, and animations break print layout. */
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    box-shadow: none !important;
+  }
+
+  /* When a dossier dialog is open, print ONLY the dossier: hide every
+     body child except the portal subtree hosting the dialog. */
+  body:has([data-slot="dialog-content"])
+    > *:not([data-slot="dialog-content"]):not(
+      :has([data-slot="dialog-content"])
+    ) {
+    display: none !important;
+  }
+  [data-slot="dialog-overlay"] {
+    display: none !important;
+    background: transparent !important;
+  }
+
+  /* Otherwise hide app chrome: nav, footer, floating + sticky controls. */
+  header,
+  footer,
+  nav,
+  [aria-label="Back to top"],
+  [data-print="hide"],
+  .sticky {
+    display: none !important;
+  }
+
+  /* Full-bleed hero compresses to a compact band. */
+  section[class*="min-h-"] {
+    min-height: auto !important;
+  }
+
+  /* Expand every scroll container so nothing is clipped. */
+  .thin-scroll,
+  [class*="overflow-y-auto"],
+  [class*="overflow-auto"],
+  [class*="max-h-"] {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  /* Keep table rows and figures intact across page breaks; protect
+     rounded cards only inside printed dossiers (whole-page cards must
+     be allowed to fragment between rows). */
+  tr,
+  figure,
+  svg {
+    break-inside: avoid;
+  }
+  [role="dialog"] [class*="rounded-xl"],
+  [role="dialog"] [class*="rounded-lg"] {
+    break-inside: avoid;
+  }
+
+  /* Inside a printed dossier, no element may split across pages —
+     prevents half-rendered lines at page boundaries. */
+  [role="dialog"] * {
+    break-inside: avoid;
+  }
+
+  /* Dialog dossiers print as standalone sheets — un-center, un-transform,
+     and flatten the CSS grid (grid fragmentation slices text in print).
+     Note: Tailwind v4 translate utilities use the individual `translate`
+     property. Lightning CSS drops these reset declarations when bundled
+     into the compound rule above, so each gets its own rule. */
+  body [role="dialog"] {
+    position: static !important;
+    inset: auto !important;
+    transform: none !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    max-height: none !important;
+    border: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+  /* Lightning CSS drops `translate: none` declarations, so neutralize the
+     Tailwind v4 translate custom properties that feed the utility instead. */
+  body [role="dialog"] {
+    --tw-translate-x: 0 !important;
+    --tw-translate-y: 0 !important;
+  }
+  body [role="dialog"] {
+    display: block !important;
+  }
+  [role="dialog"] > button {
+    display: none !important;
+  }
+
+  /* Avoid awkward orphan headings. */
+  h1,
+  h2,
+  h3 {
+    break-after: avoid;
+  }
+
+  /* Dark hero text needs to stay legible on white paper. */
+  .text-white,
+  .text-zinc-300 {
+    color: black !important;
+  }
+  [class*="bg-zinc-950"] {
+    background: white !important;
+  }
+}

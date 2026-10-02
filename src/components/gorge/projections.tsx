@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
 import {
   CartesianGrid,
   Line,
@@ -16,11 +16,13 @@ import {
   Download,
   Flame,
   FolderOpen,
+  GitCompareArrows,
   LineChart as LineChartIcon,
   RotateCcw,
   Sigma,
   Trash2,
   TrendingUp,
+  X,
 } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { Button } from "@/components/ui/button";
@@ -29,10 +31,13 @@ import { cn } from "@/lib/utils";
 import { downloadCsv, timestampSuffix, toCsv } from "@/lib/csv";
 import { useToast } from "@/hooks/use-toast";
 import {
+  POST_DEPLETION_CAGR,
   buildProjectionSeries,
   fmtCurrency,
   fmtPct,
   futureValue,
+  futureValueDepletionAdjusted,
+  impliedCagr,
   type Submarket,
 } from "@/lib/gorge";
 import {
@@ -64,7 +69,6 @@ interface SavedScenario {
   showScenario: boolean;
   savedAt: string;
 }
-
 const STORAGE_KEY = "crgnsa-saved-scenarios";
 const CHANGE_EVENT = "crgnsa:saved-scenarios-changed";
 const EMPTY: SavedScenario[] = [];
@@ -185,9 +189,19 @@ export function ProjectionsView({ submarkets }: { submarkets: Submarket[] }) {
   const [cagr, setCagr] = useState(4.7);
   const [horizon, setHorizon] = useState(20);
   const [showScenario, setShowScenario] = useState(true);
+  const [depletionAdjusted, setDepletionAdjusted] = useState(false);
 
   const selectedMarkets = submarkets.filter((s) => selected.includes(s.slug));
   const endYear = START_YEAR + horizon;
+
+  /** Per-market curve value under the active growth regime. */
+  const marketValue = useCallback(
+    (s: Submarket, n: number) =>
+      depletionAdjusted
+        ? futureValueDepletionAdjusted(s.baselinePrice2026, s.projectedCagr, n, s.depletionYear, START_YEAR)
+        : futureValue(s.baselinePrice2026, s.projectedCagr, n),
+    [depletionAdjusted]
+  );
 
   const series = useMemo(() => {
     const points: Record<string, number | boolean>[] = [];
@@ -195,7 +209,7 @@ export function ProjectionsView({ submarkets }: { submarkets: Submarket[] }) {
       const year = START_YEAR + n;
       const row: Record<string, number | boolean> = { year };
       for (const s of selectedMarkets) {
-        row[s.slug] = futureValue(s.baselinePrice2026, s.projectedCagr, n);
+        row[s.slug] = marketValue(s, n);
       }
       if (showScenario) {
         row.scenario = futureValue(pv, cagr, n);
@@ -203,7 +217,7 @@ export function ProjectionsView({ submarkets }: { submarkets: Submarket[] }) {
       points.push(row);
     }
     return points;
-  }, [selectedMarkets, horizon, pv, cagr, showScenario]);
+  }, [selectedMarkets, horizon, pv, cagr, showScenario, marketValue]);
 
   const depletionBySlug = useMemo(() => {
     const map: Record<string, number> = {};
@@ -230,12 +244,15 @@ export function ProjectionsView({ submarkets }: { submarkets: Submarket[] }) {
     setCagr(4.7);
     setHorizon(20);
     setShowScenario(true);
+    setDepletionAdjusted(false);
     setScenarioName("");
+    setCompareIds([]);
   };
 
   /* ---------------- Saved-scenario actions ---------------- */
   const saved = useSavedScenarios();
   const [scenarioName, setScenarioName] = useState("");
+  const [compareIds, setCompareIds] = useState<string[]>([]);
   const { toast } = useToast();
 
   const saveScenario = () => {
@@ -281,8 +298,30 @@ export function ProjectionsView({ submarkets }: { submarkets: Submarket[] }) {
 
   const deleteScenario = (sc: SavedScenario) => {
     writeSaved(saved.filter((s) => s.id !== sc.id));
+    setCompareIds((ids) => ids.filter((id) => id !== sc.id));
     toast({ title: `Removed “${sc.name}”` });
   };
+
+  /* ---------------- A/B comparison mode ---------------- */
+  const toggleCompare = (sc: SavedScenario) => {
+    setCompareIds((prev) => {
+      if (prev.includes(sc.id)) return prev.filter((id) => id !== sc.id);
+      // FIFO: a third pick evicts the oldest slot.
+      return [...prev, sc.id].slice(-2);
+    });
+  };
+
+  const comparePair = useMemo(() => {
+    const a = saved.find((s) => s.id === compareIds[0]);
+    const b = saved.find((s) => s.id === compareIds[1]);
+    return a && b ? { a, b } : null;
+  }, [saved, compareIds]);
+
+  const scenarioFvOf = (sc: SavedScenario) =>
+    futureValue(sc.pv, sc.cagr, sc.horizon);
+
+  const scenarioMultipleOf = (sc: SavedScenario) =>
+    Math.pow(1 + sc.cagr / 100, sc.horizon);
 
   const exportSeriesCsv = () => {
     const headers = [
@@ -301,7 +340,7 @@ export function ProjectionsView({ submarkets }: { submarkets: Submarket[] }) {
     );
     toast({
       title: "Projection series exported",
-      description: `${series.length} annual snapshots · ${selectedMarkets.length} market${selectedMarkets.length === 1 ? "" : "s"}${showScenario ? " + scenario" : ""}.`,
+      description: `${series.length} annual snapshots · ${selectedMarkets.length} market${selectedMarkets.length === 1 ? "" : "s"}${showScenario ? " + scenario" : ""}${depletionAdjusted ? " · depletion-adjusted regime" : ""}.`,
     });
   };
 
@@ -446,6 +485,52 @@ export function ProjectionsView({ submarkets }: { submarkets: Submarket[] }) {
                 {showScenario ? "On" : "Off"}
               </span>
             </button>
+
+            <button
+              type="button"
+              onClick={() => setDepletionAdjusted((v) => !v)}
+              aria-pressed={depletionAdjusted}
+              className={cn(
+                "flex w-full items-center justify-between rounded-lg border p-3 text-left text-[13px] font-medium transition-colors",
+                depletionAdjusted
+                  ? "border-amber-500/50 bg-amber-500/[0.08]"
+                  : "bg-background"
+              )}
+            >
+              <span className="flex items-center gap-2">
+                <Flame
+                  className={cn(
+                    "h-4 w-4",
+                    depletionAdjusted
+                      ? "text-rose-500"
+                      : "text-muted-foreground"
+                  )}
+                  aria-hidden
+                />
+                Depletion-adjusted
+              </span>
+              <span
+                className={cn(
+                  "text-[11px] uppercase tracking-wider",
+                  depletionAdjusted
+                    ? "font-semibold text-amber-600 dark:text-amber-400"
+                    : "text-muted-foreground"
+                )}
+              >
+                {depletionAdjusted ? "On" : "Off"}
+              </span>
+            </button>
+            {depletionAdjusted ? (
+              <p className="rounded-md border border-amber-500/25 bg-amber-500/[0.05] p-2.5 text-[11.5px] leading-relaxed text-muted-foreground">
+                Growth regime switch: each market compounds at its full CAGR
+                only until raw land exhausts (🜂), then cools to a{" "}
+                <span className="font-semibold">
+                  {fmtPct(POST_DEPLETION_CAGR)} infill-replacement rate
+                </span>{" "}
+                — the conservative case where scarcity pricing flattens once
+                nothing remains to entitle.
+              </p>
+            ) : null}
           </div>
 
           {/* Live formula */}
@@ -512,45 +597,82 @@ export function ProjectionsView({ submarkets }: { submarkets: Submarket[] }) {
             </div>
 
             {saved.length > 0 ? (
-              <ul className="thin-scroll mt-3 max-h-64 space-y-2 overflow-y-auto pr-1">
-                {saved.map((sc) => (
-                  <li
-                    key={sc.id}
-                    className="group rounded-lg border bg-background p-2.5 transition-colors hover:border-zinc-400 dark:hover:border-zinc-600"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="truncate text-[13px] font-semibold">
-                        {sc.name}
-                      </p>
-                      <div className="flex shrink-0 items-center gap-1">
-                        <button
-                          type="button"
-                          onClick={() => loadScenario(sc)}
-                          aria-label={`Load scenario ${sc.name}`}
-                          title="Restore these inputs"
-                          className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-emerald-500/10 hover:text-emerald-600 dark:hover:text-emerald-400"
-                        >
-                          <FolderOpen className="h-3.5 w-3.5" aria-hidden />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => deleteScenario(sc)}
-                          aria-label={`Delete scenario ${sc.name}`}
-                          title="Remove this scenario"
-                          className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-rose-500/10 hover:text-rose-600 dark:hover:text-rose-400"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" aria-hidden />
-                        </button>
-                      </div>
-                    </div>
-                    <p className="mt-0.5 truncate text-[11.5px] tabular-nums text-muted-foreground">
-                      {fmtCurrency(sc.pv, { compact: true })} · {fmtPct(sc.cagr)} ·{" "}
-                      {sc.horizon} yrs · {sc.selected.length} market
-                      {sc.selected.length === 1 ? "" : "s"}
-                    </p>
-                  </li>
-                ))}
-              </ul>
+              <>
+                <p className="mt-3 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                  <GitCompareArrows className="h-3.5 w-3.5" aria-hidden />
+                  Pick two with the compare toggle for an A/B verdict.
+                </p>
+                <ul className="thin-scroll mt-2 max-h-64 space-y-2 overflow-y-auto pr-1">
+                  {saved.map((sc) => {
+                    const compareIdx = compareIds.indexOf(sc.id);
+                    return (
+                      <li
+                        key={sc.id}
+                        className={cn(
+                          "group rounded-lg border bg-background p-2.5 transition-colors hover:border-zinc-400 dark:hover:border-zinc-600",
+                          compareIdx >= 0 &&
+                            "border-emerald-500/50 bg-emerald-500/[0.05]"
+                        )}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="flex min-w-0 items-center gap-1.5 truncate text-[13px] font-semibold">
+                            {compareIdx >= 0 ? (
+                              <span className="inline-flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-[10px] font-bold text-zinc-950">
+                                {compareIdx === 0 ? "A" : "B"}
+                              </span>
+                            ) : null}
+                            <span className="truncate">{sc.name}</span>
+                          </p>
+                          <div className="flex shrink-0 items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => toggleCompare(sc)}
+                              aria-pressed={compareIdx >= 0}
+                              aria-label={`Compare scenario ${sc.name}`}
+                              title={
+                                compareIdx >= 0
+                                  ? "Remove from comparison"
+                                  : "Add to A/B comparison"
+                              }
+                              className={cn(
+                                "flex h-7 w-7 items-center justify-center rounded-md transition-colors",
+                                compareIdx >= 0
+                                  ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                                  : "text-muted-foreground hover:bg-accent hover:text-foreground"
+                              )}
+                            >
+                              <GitCompareArrows className="h-3.5 w-3.5" aria-hidden />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => loadScenario(sc)}
+                              aria-label={`Load scenario ${sc.name}`}
+                              title="Restore these inputs"
+                              className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-emerald-500/10 hover:text-emerald-600 dark:hover:text-emerald-400"
+                            >
+                              <FolderOpen className="h-3.5 w-3.5" aria-hidden />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => deleteScenario(sc)}
+                              aria-label={`Delete scenario ${sc.name}`}
+                              title="Remove this scenario"
+                              className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-rose-500/10 hover:text-rose-600 dark:hover:text-rose-400"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                            </button>
+                          </div>
+                        </div>
+                        <p className="mt-0.5 truncate text-[11.5px] tabular-nums text-muted-foreground">
+                          {fmtCurrency(sc.pv, { compact: true })} · {fmtPct(sc.cagr)} ·{" "}
+                          {sc.horizon} yrs · {sc.selected.length} market
+                          {sc.selected.length === 1 ? "" : "s"}
+                        </p>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </>
             ) : (
               <p className="mt-3 rounded-lg border border-dashed p-3 text-[12px] leading-relaxed text-muted-foreground">
                 Save the current inputs as a named hypothesis — comparisons
@@ -558,17 +680,123 @@ export function ProjectionsView({ submarkets }: { submarkets: Submarket[] }) {
               </p>
             )}
           </div>
+
+          {/* A/B comparison verdict */}
+          {comparePair ? (
+            <div className="rounded-xl border border-emerald-500/30 bg-card p-5 shadow-sm">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <GitCompareArrows className="h-4 w-4 text-emerald-600 dark:text-emerald-400" aria-hidden />
+                  <MicroLabel>A/B Verdict</MicroLabel>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setCompareIds([])}
+                  aria-label="Clear comparison"
+                  className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                >
+                  <X className="h-3.5 w-3.5" aria-hidden />
+                </button>
+              </div>
+              {(() => {
+                const { a, b } = comparePair;
+                const fvA = scenarioFvOf(a);
+                const fvB = scenarioFvOf(b);
+                const aWins = fvA >= fvB;
+                const winner = aWins ? a : b;
+                const loser = aWins ? b : a;
+                const gapPct =
+                  fvA === fvB
+                    ? 0
+                    : (Math.abs(fvA - fvB) / Math.min(fvA, fvB)) * 100;
+                return (
+                  <div className="mt-3 space-y-3">
+                    <div className="grid grid-cols-2 gap-2.5">
+                      {[a, b].map((sc, i) => {
+                        const isWinner = sc.id === winner.id;
+                        const fv = sc.id === a.id ? fvA : fvB;
+                        return (
+                          <div
+                            key={sc.id}
+                            className={cn(
+                              "rounded-lg border p-3",
+                              isWinner
+                                ? "border-emerald-500/50 bg-emerald-500/[0.06]"
+                                : "bg-background"
+                            )}
+                          >
+                            <p className="flex items-center gap-1.5 text-[11.5px] font-semibold">
+                              <span
+                                className={cn(
+                                  "inline-flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-bold",
+                                  isWinner
+                                    ? "bg-emerald-500 text-zinc-950"
+                                    : "bg-muted text-muted-foreground"
+                                )}
+                              >
+                                {i === 0 ? "A" : "B"}
+                              </span>
+                              <span className="truncate" title={sc.name}>
+                                {sc.name}
+                              </span>
+                            </p>
+                            <p
+                              className={cn(
+                                "mt-1.5 text-lg font-semibold tabular-nums",
+                                isWinner &&
+                                  "text-emerald-600 dark:text-emerald-400"
+                              )}
+                            >
+                              {fmtCurrency(fv, { compact: true })}
+                            </p>
+                            <p className="mt-0.5 text-[11px] tabular-nums text-muted-foreground">
+                              {fmtCurrency(sc.pv, { compact: true })} ·{" "}
+                              {fmtPct(sc.cagr)} · {sc.horizon} yrs ·{" "}
+                              {scenarioMultipleOf(sc).toFixed(2)}×
+                            </p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <p className="rounded-md border bg-background p-2.5 text-[12px] leading-relaxed text-muted-foreground">
+                      <span className="font-semibold text-foreground">
+                        “{winner.name}”
+                      </span>{" "}
+                      lands{" "}
+                      <span className="font-semibold text-emerald-600 dark:text-emerald-400">
+                        {fmtCurrency(Math.abs(fvA - fvB), { compact: true })}{" "}
+                        ({gapPct.toFixed(1)}%)
+                      </span>{" "}
+                      ahead of “{loser.name}” at horizon —{" "}
+                      {winner.cagr > loser.cagr
+                        ? "the compounding-rate edge dominates"
+                        : winner.horizon < loser.horizon
+                          ? "a shorter runway still out-carries"
+                          : "the larger principal carries the verdict"}
+                      .
+                    </p>
+                  </div>
+                );
+              })()}
+            </div>
+          ) : null}
         </div>
 
         {/* Chart + milestones */}
         <div className="space-y-4 lg:col-span-3">
           <div className="rounded-xl border bg-card p-4 shadow-sm sm:p-6">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <LineChartIcon className="h-4 w-4 text-muted-foreground" aria-hidden />
                 <MicroLabel>
                   Appreciation Curves · {START_YEAR}–{endYear}
                 </MicroLabel>
+                {depletionAdjusted ? (
+                  <span className="inline-flex items-center gap-1 rounded-sm border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-widest text-amber-700 dark:text-amber-300">
+                    <Flame className="h-3 w-3" aria-hidden />
+                    Depletion-adjusted · {fmtPct(POST_DEPLETION_CAGR)} post
+                  </span>
+                ) : null}
               </div>
               <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11.5px] text-muted-foreground">
                 {selectedMarkets.map((s, i) => (
@@ -647,7 +875,7 @@ export function ProjectionsView({ submarkets }: { submarkets: Submarket[] }) {
                     const nDepletion = s.depletionYear - START_YEAR;
                     const depletionValue =
                       nDepletion >= 0 && nDepletion <= horizon
-                        ? futureValue(s.baselinePrice2026, s.projectedCagr, nDepletion)
+                        ? marketValue(s, nDepletion)
                         : null;
                     return depletionValue !== null ? (
                       <ReferenceDot
@@ -730,9 +958,10 @@ export function ProjectionsView({ submarkets }: { submarkets: Submarket[] }) {
           {/* Per-market outcome cards */}
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {selectedMarkets.map((s, i) => {
-              const fv = futureValue(s.baselinePrice2026, s.projectedCagr, horizon);
-              const multiple = Math.pow(1 + s.projectedCagr / 100, horizon);
+              const fv = marketValue(s, horizon);
+              const multiple = fv / s.baselinePrice2026;
               const color = PALETTE[i % PALETTE.length];
+              const implied = impliedCagr(s.baselinePrice2026, fv, horizon);
               return (
                 <div
                   key={s.slug}
@@ -744,7 +973,10 @@ export function ProjectionsView({ submarkets }: { submarkets: Submarket[] }) {
                       {s.name}
                       <StateBadge state={s.state} />
                     </p>
-                    <CagrBadge cagr={s.projectedCagr} showTier={false} />
+                    <CagrBadge
+                      cagr={depletionAdjusted ? implied : s.projectedCagr}
+                      showTier={false}
+                    />
                   </div>
                   <div className="mt-3 flex items-baseline justify-between">
                     <span className="text-[12px] text-muted-foreground">
@@ -758,6 +990,14 @@ export function ProjectionsView({ submarkets }: { submarkets: Submarket[] }) {
                     <span className="inline-flex items-center gap-1">
                       <TrendingUp className="h-3 w-3" aria-hidden />
                       {multiple.toFixed(2)}× over {horizon} yrs
+                      {depletionAdjusted ? (
+                        <span
+                          className="ml-1 rounded-sm border border-amber-500/30 bg-amber-500/10 px-1 py-px text-[10px] font-semibold text-amber-700 dark:text-amber-300"
+                          title="Implied CAGR after the post-depletion growth-regime switch"
+                        >
+                          adj.
+                        </span>
+                      ) : null}
                     </span>
                     <DepletionBadge year={s.depletionYear} />
                   </div>

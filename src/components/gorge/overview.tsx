@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import Image from "next/image";
 import { ArrowRight, ChevronDown, Flame, Layers, LineChart, Map, TrendingUp } from "lucide-react";
 import { motion } from "framer-motion";
@@ -7,6 +8,7 @@ import {
   fmtAcres,
   fmtCurrency,
   fmtPct,
+  futureValue,
   type CorridorStats,
   type PropertyListing,
   type Submarket,
@@ -16,6 +18,7 @@ import {
   CountUp,
   MicroLabel,
   SectionHeader,
+  Sparkline,
   StatCard,
   StateBadge,
 } from "./shared";
@@ -216,6 +219,32 @@ export function OverviewView({
 }) {
   const featured = listings.find((l) => l.featured) ?? null;
 
+  /* KPI sparkline series — 21 annual points, 2026–2046. */
+  const SPARK_YEARS = 20;
+  const sparkPoints = useMemo(() => {
+    // 1) Median price compounding at the corridor-average CAGR.
+    const median: number[] = [];
+    // 2) Corridor aggregate buildable land remaining (linear absorption to
+    //    the latest depletion year, then zero).
+    const land: number[] = [];
+    // 3) Cumulative markets past raw-land exhaustion.
+    const exhausted: number[] = [];
+    // 4) Growth of a $1 unit at the average CAGR (multiple curve).
+    const multiple: number[] = [];
+    const latest = stats.latestDepletion ?? 2038;
+    for (let n = 0; n <= SPARK_YEARS; n++) {
+      const year = 2026 + n;
+      median.push(futureValue(stats.regionalMedianPrice, stats.averageCagr, n));
+      const runway = Math.max(0, latest - year);
+      land.push((runway / Math.max(1, latest - 2026)) * stats.totalNetBuildableMid);
+      exhausted.push(
+        submarkets.filter((s) => s.depletionYear <= year).length
+      );
+      multiple.push(Math.pow(1 + stats.averageCagr / 100, n));
+    }
+    return { median, land, exhausted, multiple };
+  }, [stats, submarkets]);
+
   return (
     <div className="flex flex-col gap-14 pb-16 sm:gap-16">
       <Hero stats={stats} />
@@ -242,6 +271,13 @@ export function OverviewView({
               />
             }
             sub={`band ${fmtAcres(stats.totalNetBuildableMin)} – ${fmtAcres(stats.totalNetBuildableMax)} · gross vacant ${fmtAcres(stats.totalGrossVacant)}`}
+            sparkline={
+              <Sparkline
+                points={sparkPoints.land}
+                color="#64748b"
+                label="Corridor buildable land declining to zero by the late 2030s"
+              />
+            }
             footer={
               <div className="flex items-center gap-2 text-[12px] text-muted-foreground">
                 <Map className="h-3.5 w-3.5" aria-hidden />
@@ -259,6 +295,13 @@ export function OverviewView({
               />
             }
             sub="11-jurisdiction median baseline, all product types"
+            sparkline={
+              <Sparkline
+                points={sparkPoints.median}
+                color="#0d9488"
+                label="Median price compounding at the corridor-average CAGR to 2046"
+              />
+            }
             footer={
               <div className="text-[12px] text-muted-foreground">
                 Wishram entry {fmtCurrency(305000, { compact: true })} → Hood River{" "}
@@ -278,6 +321,13 @@ export function OverviewView({
             }
             sub="20-year horizon to 2046, corridor-wide mean"
             accent="emerald"
+            sparkline={
+              <Sparkline
+                points={sparkPoints.multiple}
+                color="#10b981"
+                label="Growth multiple of one dollar at the average corridor CAGR"
+              />
+            }
             footer={
               <div className="text-[12px] text-muted-foreground">
                 Top market: Hood River {fmtPct(5.8)} · floor: Wishram {fmtPct(4.3)}
@@ -290,6 +340,13 @@ export function OverviewView({
             value={`${stats.earliestDepletion}–${stats.latestDepletion}`}
             sub="Estimated window when net buildable acreage reaches zero"
             accent="rose"
+            sparkline={
+              <Sparkline
+                points={sparkPoints.exhausted.map((v) => v + 0.15)}
+                color="#f43f5e"
+                label="Cumulative count of markets past raw-land exhaustion"
+              />
+            }
             footer={
               <div className="text-[12px] text-muted-foreground">
                 Mosier exhausts first ({stats.earliestDepletion}); The Dalles &amp;

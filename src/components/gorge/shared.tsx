@@ -210,6 +210,84 @@ export function FrameworkBadge({
 }
 
 /* ---------------------------------------------------------------- */
+/* Sparkline — lightweight inline SVG mini-chart for KPI footers      */
+/* ---------------------------------------------------------------- */
+
+export function Sparkline({
+  points,
+  color = "#10b981",
+  width = 120,
+  height = 34,
+  fill = true,
+  className,
+  label,
+}: {
+  points: number[];
+  color?: string;
+  width?: number;
+  height?: number;
+  fill?: boolean;
+  className?: string;
+  label: string;
+}) {
+  if (points.length < 2) return null;
+  const min = Math.min(...points);
+  const max = Math.max(...points);
+  const span = max - min || 1;
+  const pad = 2.5;
+  const innerH = height - pad * 2;
+  const step = width / (points.length - 1);
+  const coords = points.map((v, i) => {
+    const x = i * step;
+    const y = pad + innerH - ((v - min) / span) * innerH;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+  const polyline = coords.join(" ");
+  const areaPath = `M${coords[0]} L${polyline.replace(/ /g, " L")} L${width},${height} L0,${height} Z`;
+  const gradId = `spark-grad-${color.replace("#", "")}`;
+
+  return (
+    <svg
+      viewBox={`0 0 ${width} ${height}`}
+      width={width}
+      height={height}
+      role="img"
+      aria-label={label}
+      className={cn("overflow-visible", className)}
+      preserveAspectRatio="none"
+    >
+      {fill ? (
+        <>
+          <defs>
+            <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={color} stopOpacity={0.28} />
+              <stop offset="100%" stopColor={color} stopOpacity={0.02} />
+            </linearGradient>
+          </defs>
+          <path d={areaPath} fill={`url(#${gradId})`} />
+        </>
+      ) : null}
+      <polyline
+        points={polyline}
+        fill="none"
+        stroke={color}
+        strokeWidth={1.75}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        vectorEffect="non-scaling-stroke"
+      />
+      {/* terminal dot */}
+      <circle
+        cx={width}
+        cy={pad + innerH - ((points[points.length - 1] - min) / span) * innerH}
+        r={2.4}
+        fill={color}
+      />
+    </svg>
+  );
+}
+
+/* ---------------------------------------------------------------- */
 /* KPI stat card                                                     */
 /* ---------------------------------------------------------------- */
 
@@ -219,6 +297,7 @@ export function StatCard({
   value,
   sub,
   footer,
+  sparkline,
   accent = "default",
   className,
 }: {
@@ -227,6 +306,7 @@ export function StatCard({
   value: ReactNode;
   sub?: ReactNode;
   footer?: ReactNode;
+  sparkline?: ReactNode;
   accent?: "default" | "emerald" | "amber" | "rose";
   className?: string;
 }) {
@@ -239,10 +319,15 @@ export function StatCard({
   return (
     <div
       className={cn(
-        "group rounded-xl border bg-card p-5 shadow-sm transition-all hover:shadow-md",
+        "group relative overflow-hidden rounded-xl border bg-card p-5 shadow-sm transition-all hover:shadow-md",
         className
       )}
     >
+      {sparkline ? (
+        <div className="pointer-events-none absolute bottom-0 right-0 opacity-70 transition-opacity duration-300 group-hover:opacity-100 [&_svg]:h-auto [&_svg]:w-[46%]">
+          {sparkline}
+        </div>
+      ) : null}
       <div className="flex items-start justify-between gap-3">
         <MicroLabel>{label}</MicroLabel>
         <div

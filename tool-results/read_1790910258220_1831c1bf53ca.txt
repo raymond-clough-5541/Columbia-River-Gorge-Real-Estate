@@ -1,0 +1,839 @@
+     1→"use client";
+     2→
+     3→import { useMemo, useState, useSyncExternalStore } from "react";
+     4→import {
+     5→  CartesianGrid,
+     6→  Line,
+     7→  LineChart,
+     8→  ReferenceDot,
+     9→  ResponsiveContainer,
+    10→  Tooltip,
+    11→  XAxis,
+    12→  YAxis,
+    13→} from "recharts";
+    14→import {
+    15→  BookmarkPlus,
+    16→  Download,
+    17→  Flame,
+    18→  FolderOpen,
+    19→  LineChart as LineChartIcon,
+    20→  RotateCcw,
+    21→  Sigma,
+    22→  Trash2,
+    23→  TrendingUp,
+    24→} from "lucide-react";
+    25→import { Slider } from "@/components/ui/slider";
+    26→import { Button } from "@/components/ui/button";
+    27→import { Input } from "@/components/ui/input";
+    28→import { cn } from "@/lib/utils";
+    29→import { downloadCsv, timestampSuffix, toCsv } from "@/lib/csv";
+    30→import { useToast } from "@/hooks/use-toast";
+    31→import {
+    32→  buildProjectionSeries,
+    33→  fmtCurrency,
+    34→  fmtPct,
+    35→  futureValue,
+    36→  type Submarket,
+    37→} from "@/lib/gorge";
+    38→import {
+    39→  CagrBadge,
+    40→  DepletionBadge,
+    41→  MicroLabel,
+    42→  SectionHeader,
+    43→  StateBadge,
+    44→} from "./shared";
+    45→
+    46→const START_YEAR = 2026;
+    47→const MAX_SELECTED = 5;
+    48→/** Submarket curve palette — emerald is reserved for the custom scenario. */
+    49→const PALETTE = ["#0d9488", "#64748b", "#f59e0b", "#f43f5e", "#3f3f46"];
+    50→const SCENARIO_COLOR = "#10b981";
+    51→
+    52→/* ---------------------------------------------------------------- */
+    53→/* Saved scenarios — localStorage persistence via a stable,          */
+    54→/* lint-safe useSyncExternalStore subscription.                      */
+    55→/* ---------------------------------------------------------------- */
+    56→
+    57→interface SavedScenario {
+    58→  id: string;
+    59→  name: string;
+    60→  selected: string[];
+    61→  pv: number;
+    62→  cagr: number;
+    63→  horizon: number;
+    64→  showScenario: boolean;
+    65→  savedAt: string;
+    66→}
+    67→
+    68→const STORAGE_KEY = "crgnsa-saved-scenarios";
+    69→const CHANGE_EVENT = "crgnsa:saved-scenarios-changed";
+    70→const EMPTY: SavedScenario[] = [];
+    71→
+    72→let cachedRaw: string | null = null;
+    73→let cachedList: SavedScenario[] = EMPTY;
+    74→
+    75→function readSaved(): SavedScenario[] {
+    76→  let raw: string | null = null;
+    77→  try {
+    78→    raw = window.localStorage.getItem(STORAGE_KEY);
+    79→  } catch {
+    80→    raw = null;
+    81→  }
+    82→  if (raw === cachedRaw) return cachedList;
+    83→  cachedRaw = raw;
+    84→  try {
+    85→    const parsed = raw ? (JSON.parse(raw) as SavedScenario[]) : [];
+    86→    cachedList = Array.isArray(parsed) ? parsed : EMPTY;
+    87→  } catch {
+    88→    cachedList = EMPTY;
+    89→  }
+    90→  return cachedList;
+    91→}
+    92→
+    93→function writeSaved(list: SavedScenario[]): void {
+    94→  try {
+    95→    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+    96→    window.dispatchEvent(new Event(CHANGE_EVENT));
+    97→  } catch {
+    98→    /* storage unavailable — ignore */
+    99→  }
+   100→}
+   101→
+   102→function useSavedScenarios(): SavedScenario[] {
+   103→  return useSyncExternalStore(
+   104→    (cb) => {
+   105→      window.addEventListener(CHANGE_EVENT, cb);
+   106→      window.addEventListener("storage", cb);
+   107→      return () => {
+   108→        window.removeEventListener(CHANGE_EVENT, cb);
+   109→        window.removeEventListener("storage", cb);
+   110→      };
+   111→    },
+   112→    readSaved,
+   113→    () => EMPTY
+   114→  );
+   115→}
+   116→
+   117→interface TooltipEntry {
+   118→  name?: string;
+   119→  value?: number;
+   120→  dataKey?: string | number;
+   121→  color?: string;
+   122→}
+   123→
+   124→function ChartTooltip({
+   125→  active,
+   126→  payload,
+   127→  label,
+   128→  depletionBySlug,
+   129→}: {
+   130→  active?: boolean;
+   131→  payload?: TooltipEntry[];
+   132→  label?: string | number;
+   133→  depletionBySlug: Record<string, number>;
+   134→}) {
+   135→  if (!active || !payload || payload.length === 0) return null;
+   136→  const year = Number(label);
+   137→  return (
+   138→    <div className="rounded-lg border bg-popover p-3.5 text-popover-foreground shadow-xl">
+   139→      <p className="text-[12px] font-semibold uppercase tracking-wider text-muted-foreground">
+   140→        {year}
+   141→      </p>
+   142→      <div className="mt-2 space-y-1.5">
+   143→        {payload.map((entry) => {
+   144→          const value = entry.value ?? 0;
+   145→          const isScenario = entry.dataKey === "scenario";
+   146→          const depletion = isScenario
+   147→            ? null
+   148→            : depletionBySlug[String(entry.dataKey)];
+   149→          const depleted = depletion !== null && depletion !== undefined && year >= depletion;
+   150→          return (
+   151→            <div key={String(entry.dataKey)} className="flex items-center gap-2.5 text-[13px]">
+   152→              <span
+   153→                className="h-2.5 w-2.5 shrink-0 rounded-full"
+   154→                style={{ backgroundColor: entry.color }}
+   155→                aria-hidden
+   156→              />
+   157→              <span className="font-medium">{entry.name}</span>
+   158→              <span className="ml-auto pl-4 font-semibold tabular-nums">
+   159→                {fmtCurrency(value, { compact: true })}
+   160→              </span>
+   161→              {depleted ? (
+   162→                <Flame className="h-3.5 w-3.5 shrink-0 text-rose-500" aria-label="Raw land depleted" />
+   163→              ) : null}
+   164→            </div>
+   165→          );
+   166→        })}
+   167→      </div>
+   168→      <p className="mt-2 border-t pt-1.5 text-[11px] text-muted-foreground">
+   169→        🜂 marks years after a market's projected raw-land exhaustion
+   170→      </p>
+   171→    </div>
+   172→  );
+   173→}
+   174→
+   175→export function ProjectionsView({ submarkets }: { submarkets: Submarket[] }) {
+   176→  const defaultSelected = useMemo(
+   177→    () =>
+   178→      ["hood-river", "the-dalles", "dallesport"].filter((slug) =>
+   179→        submarkets.some((s) => s.slug === slug)
+   180→      ),
+   181→    [submarkets]
+   182→  );
+   183→  const [selected, setSelected] = useState<string[]>(defaultSelected);
+   184→  const [pv, setPv] = useState(455000);
+   185→  const [cagr, setCagr] = useState(4.7);
+   186→  const [horizon, setHorizon] = useState(20);
+   187→  const [showScenario, setShowScenario] = useState(true);
+   188→
+   189→  const selectedMarkets = submarkets.filter((s) => selected.includes(s.slug));
+   190→  const endYear = START_YEAR + horizon;
+   191→
+   192→  const series = useMemo(() => {
+   193→    const points: Record<string, number | boolean>[] = [];
+   194→    for (let n = 0; n <= horizon; n++) {
+   195→      const year = START_YEAR + n;
+   196→      const row: Record<string, number | boolean> = { year };
+   197→      for (const s of selectedMarkets) {
+   198→        row[s.slug] = futureValue(s.baselinePrice2026, s.projectedCagr, n);
+   199→      }
+   200→      if (showScenario) {
+   201→        row.scenario = futureValue(pv, cagr, n);
+   202→      }
+   203→      points.push(row);
+   204→    }
+   205→    return points;
+   206→  }, [selectedMarkets, horizon, pv, cagr, showScenario]);
+   207→
+   208→  const depletionBySlug = useMemo(() => {
+   209→    const map: Record<string, number> = {};
+   210→    for (const s of selectedMarkets) map[s.slug] = s.depletionYear;
+   211→    return map;
+   212→  }, [selectedMarkets]);
+   213→
+   214→  const scenarioFv = futureValue(pv, cagr, horizon);
+   215→  const scenarioMultiple = Math.pow(1 + cagr / 100, horizon);
+   216→
+   217→  const toggleSelected = (slug: string) => {
+   218→    setSelected((prev) => {
+   219→      if (prev.includes(slug)) {
+   220→        return prev.filter((s) => s !== slug) || [];
+   221→      }
+   222→      if (prev.length >= MAX_SELECTED) return prev;
+   223→      return [...prev, slug];
+   224→    });
+   225→  };
+   226→
+   227→  const reset = () => {
+   228→    setSelected(defaultSelected);
+   229→    setPv(455000);
+   230→    setCagr(4.7);
+   231→    setHorizon(20);
+   232→    setShowScenario(true);
+   233→    setScenarioName("");
+   234→  };
+   235→
+   236→  /* ---------------- Saved-scenario actions ---------------- */
+   237→  const saved = useSavedScenarios();
+   238→  const [scenarioName, setScenarioName] = useState("");
+   239→  const { toast } = useToast();
+   240→
+   241→  const saveScenario = () => {
+   242→    const name = scenarioName.trim();
+   243→    if (!name) {
+   244→      toast({
+   245→        title: "Name your scenario first",
+   246→        description: "Give the hypothesis a label — e.g. “Dallesport r=6% run” — then save.",
+   247→      });
+   248→      return;
+   249→    }
+   250→    const next: SavedScenario[] = [
+   251→      {
+   252→        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+   253→        name,
+   254→        selected: [...selected],
+   255→        pv,
+   256→        cagr,
+   257→        horizon,
+   258→        showScenario,
+   259→        savedAt: new Date().toISOString(),
+   260→      },
+   261→      ...saved,
+   262→    ].slice(0, 12); // cap the ledger
+   263→    writeSaved(next);
+   264→    setScenarioName("");
+   265→    toast({
+   266→      title: `Scenario “${name}” saved`,
+   267→      description: "Stored locally in this browser — reload it any time below.",
+   268→    });
+   269→  };
+   270→
+   271→  const loadScenario = (sc: SavedScenario) => {
+   272→    setSelected(
+   273→      sc.selected.filter((slug) => submarkets.some((s) => s.slug === slug))
+   274→    );
+   275→    setPv(sc.pv);
+   276→    setCagr(sc.cagr);
+   277→    setHorizon(sc.horizon);
+   278→    setShowScenario(sc.showScenario);
+   279→    toast({ title: `Loaded “${sc.name}”`, description: "Inputs restored to the saved hypothesis." });
+   280→  };
+   281→
+   282→  const deleteScenario = (sc: SavedScenario) => {
+   283→    writeSaved(saved.filter((s) => s.id !== sc.id));
+   284→    toast({ title: `Removed “${sc.name}”` });
+   285→  };
+   286→
+   287→  const exportSeriesCsv = () => {
+   288→    const headers = [
+   289→      "Year",
+   290→      ...selectedMarkets.map((s) => `${s.name} (${s.state})`),
+   291→      ...(showScenario ? ["Custom Scenario"] : []),
+   292→    ];
+   293→    const data = series.map((row) => [
+   294→      Number(row.year),
+   295→      ...selectedMarkets.map((s) => Math.round(Number(row[s.slug]))),
+   296→      ...(showScenario ? [Math.round(Number(row.scenario))] : []),
+   297→    ]);
+   298→    downloadCsv(
+   299→      `crgnsa-projection-series-${timestampSuffix()}.csv`,
+   300→      toCsv(headers, data)
+   301→    );
+   302→    toast({
+   303→      title: "Projection series exported",
+   304→      description: `${series.length} annual snapshots · ${selectedMarkets.length} market${selectedMarkets.length === 1 ? "" : "s"}${showScenario ? " + scenario" : ""}.`,
+   305→    });
+   306→  };
+   307→
+   308→  return (
+   309→    <div className="mx-auto w-full max-w-7xl px-4 pb-16 pt-10 sm:px-6 lg:px-8">
+   310→      <SectionHeader
+   311→        eyebrow="Compound Capitalization & Land Depletion Visualizer"
+   312→        title="FV = PV · (1 + r)ⁿ, applied to every market in the Gorge"
+   313→        description="Select submarkets, override the baseline price and growth rate, and stretch the horizon to stress-test development hypotheses against the corridor's statutory land ceiling."
+   314→        action={
+   315→          <Button
+   316→            variant="outline"
+   317→            onClick={reset}
+   318→            className="h-9 gap-2 text-[13px]"
+   319→          >
+   320→            <RotateCcw className="h-3.5 w-3.5" aria-hidden />
+   321→            Reset defaults
+   322→          </Button>
+   323→        }
+   324→      />
+   325→
+   326→      <div className="grid gap-4 lg:grid-cols-4">
+   327→        {/* Controls */}
+   328→        <div className="space-y-4 lg:col-span-1">
+   329→          <div className="rounded-xl border bg-card p-5 shadow-sm">
+   330→            <MicroLabel>Submarkets</MicroLabel>
+   331→            <p className="mt-1 text-[12px] text-muted-foreground">
+   332→              Up to {MAX_SELECTED} concurrent curves
+   333→            </p>
+   334→            <div className="mt-3 flex flex-wrap gap-2">
+   335→              {submarkets.map((s) => {
+   336→                const idx = selected.indexOf(s.slug);
+   337→                const isOn = idx >= 0;
+   338→                return (
+   339→                  <button
+   340→                    key={s.slug}
+   341→                    type="button"
+   342→                    onClick={() => toggleSelected(s.slug)}
+   343→                    aria-pressed={isOn}
+   344→                    className={cn(
+   345→                      "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-[12px] font-medium transition-all",
+   346→                      isOn
+   347→                        ? "border-zinc-900 bg-zinc-900 text-white shadow-sm dark:border-emerald-500 dark:bg-emerald-500 dark:text-zinc-950"
+   348→                        : "bg-background text-muted-foreground hover:border-zinc-400 dark:hover:border-zinc-600"
+   349→                    )}
+   350→                  >
+   351→                    {isOn ? (
+   352→                      <span
+   353→                        className="h-2 w-2 rounded-full"
+   354→                        style={{ backgroundColor: PALETTE[idx % PALETTE.length] }}
+   355→                        aria-hidden
+   356→                      />
+   357→                    ) : null}
+   358→                    {s.name}
+   359→                  </button>
+   360→                );
+   361→              })}
+   362→            </div>
+   363→          </div>
+   364→
+   365→          <div className="space-y-5 rounded-xl border bg-card p-5 shadow-sm">
+   366→            <MicroLabel>Scenario Inputs</MicroLabel>
+   367→
+   368→            <div>
+   369→              <div className="mb-2 flex items-baseline justify-between">
+   370→                <label htmlFor="proj-pv" className="text-[13px] text-muted-foreground">
+   371→                  Baseline price · PV
+   372→                </label>
+   373→                <span className="text-sm font-semibold tabular-nums">
+   374→                  {fmtCurrency(pv, { compact: true })}
+   375→                </span>
+   376→              </div>
+   377→              <Slider
+   378→                id="proj-pv"
+   379→                value={[pv]}
+   380→                onValueChange={(v) => setPv(v[0])}
+   381→                min={250000}
+   382→                max={900000}
+   383→                step={5000}
+   384→                aria-label="Baseline price"
+   385→              />
+   386→            </div>
+   387→
+   388→            <div>
+   389→              <div className="mb-2 flex items-baseline justify-between">
+   390→                <label htmlFor="proj-cagr" className="text-[13px] text-muted-foreground">
+   391→                  Growth rate · r
+   392→                </label>
+   393→                <span className="text-sm font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
+   394→                  {fmtPct(cagr)}
+   395→                </span>
+   396→              </div>
+   397→              <Slider
+   398→                id="proj-cagr"
+   399→                value={[cagr]}
+   400→                onValueChange={(v) => setCagr(v[0])}
+   401→                min={3}
+   402→                max={8}
+   403→                step={0.1}
+   404→                aria-label="Compound annual growth rate"
+   405→              />
+   406→            </div>
+   407→
+   408→            <div>
+   409→              <div className="mb-2 flex items-baseline justify-between">
+   410→                <label htmlFor="proj-horizon" className="text-[13px] text-muted-foreground">
+   411→                  Horizon · n years
+   412→                </label>
+   413→                <span className="text-sm font-semibold tabular-nums">
+   414→                  {horizon} yrs → {endYear}
+   415→                </span>
+   416→              </div>
+   417→              <Slider
+   418→                id="proj-horizon"
+   419→                value={[horizon]}
+   420→                onValueChange={(v) => setHorizon(v[0])}
+   421→                min={5}
+   422→                max={25}
+   423→                step={1}
+   424→                aria-label="Time horizon in years"
+   425→              />
+   426→            </div>
+   427→
+   428→            <button
+   429→              type="button"
+   430→              onClick={() => setShowScenario((v) => !v)}
+   431→              aria-pressed={showScenario}
+   432→              className={cn(
+   433→                "flex w-full items-center justify-between rounded-lg border p-3 text-left text-[13px] font-medium transition-colors",
+   434→                showScenario ? "border-emerald-500/40 bg-emerald-500/[0.07]" : "bg-background"
+   435→              )}
+   436→            >
+   437→              <span className="flex items-center gap-2">
+   438→                <span
+   439→                  className="h-2.5 w-2.5 rounded-full"
+   440→                  style={{ backgroundColor: SCENARIO_COLOR }}
+   441→                  aria-hidden
+   442→                />
+   443→                Custom scenario curve
+   444→              </span>
+   445→              <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+   446→                {showScenario ? "On" : "Off"}
+   447→              </span>
+   448→            </button>
+   449→          </div>
+   450→
+   451→          {/* Live formula */}
+   452→          <div className="rounded-xl border bg-card p-5 shadow-sm">
+   453→            <div className="flex items-center gap-2">
+   454→              <Sigma className="h-4 w-4 text-muted-foreground" aria-hidden />
+   455→              <MicroLabel>Live Formula</MicroLabel>
+   456→            </div>
+   457→            <div className="mt-3 space-y-1.5 rounded-lg border bg-background p-3.5 font-mono text-[12.5px] leading-relaxed">
+   458→              <p className="text-muted-foreground">FV = PV · (1 + r)ⁿ</p>
+   459→              <p>
+   460→                FV = {fmtCurrency(pv, { compact: true })} · (1 +{" "}
+   461→                {(cagr / 100).toFixed(3)})<sup>{horizon}</sup>
+   462→              </p>
+   463→              <p className="font-semibold text-emerald-600 dark:text-emerald-400">
+   464→                FV = {fmtCurrency(scenarioFv, { compact: true })}
+   465→              </p>
+   466→            </div>
+   467→            <div className="mt-3 grid grid-cols-2 gap-2 text-center">
+   468→              <div className="rounded-lg bg-muted/60 p-2.5">
+   469→                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+   470→                  Multiple
+   471→                </p>
+   472→                <p className="mt-0.5 text-sm font-semibold tabular-nums">
+   473→                  {scenarioMultiple.toFixed(2)}×
+   474→                </p>
+   475→              </div>
+   476→              <div className="rounded-lg bg-muted/60 p-2.5">
+   477→                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+   478→                  Avg gain / yr
+   479→                </p>
+   480→                <p className="mt-0.5 text-sm font-semibold tabular-nums">
+   481→                  {fmtCurrency((scenarioFv - pv) / horizon, { compact: true })}
+   482→                </p>
+   483→              </div>
+   484→            </div>
+   485→          </div>
+   486→
+   487→          {/* Saved scenarios */}
+   488→          <div className="rounded-xl border bg-card p-5 shadow-sm">
+   489→            <div className="flex items-center gap-2">
+   490→              <BookmarkPlus className="h-4 w-4 text-muted-foreground" aria-hidden />
+   491→              <MicroLabel>Saved Scenarios</MicroLabel>
+   492→            </div>
+   493→            <div className="mt-3 flex gap-2">
+   494→              <Input
+   495→                value={scenarioName}
+   496→                onChange={(e) => setScenarioName(e.target.value)}
+   497→                onKeyDown={(e) => {
+   498→                  if (e.key === "Enter") saveScenario();
+   499→                }}
+   500→                placeholder="e.g. Dallesport r=6% run"
+   501→                className="h-9 text-[13px]"
+   502→                aria-label="Scenario name"
+   503→                maxLength={48}
+   504→              />
+   505→              <Button
+   506→                onClick={saveScenario}
+   507→                className="h-9 shrink-0 gap-1.5 px-3 text-[13px] active:scale-[0.98]"
+   508→              >
+   509→                <BookmarkPlus className="h-3.5 w-3.5" aria-hidden />
+   510→                Save
+   511→              </Button>
+   512→            </div>
+   513→
+   514→            {saved.length > 0 ? (
+   515→              <ul className="thin-scroll mt-3 max-h-64 space-y-2 overflow-y-auto pr-1">
+   516→                {saved.map((sc) => (
+   517→                  <li
+   518→                    key={sc.id}
+   519→                    className="group rounded-lg border bg-background p-2.5 transition-colors hover:border-zinc-400 dark:hover:border-zinc-600"
+   520→                  >
+   521→                    <div className="flex items-center justify-between gap-2">
+   522→                      <p className="truncate text-[13px] font-semibold">
+   523→                        {sc.name}
+   524→                      </p>
+   525→                      <div className="flex shrink-0 items-center gap-1">
+   526→                        <button
+   527→                          type="button"
+   528→                          onClick={() => loadScenario(sc)}
+   529→                          aria-label={`Load scenario ${sc.name}`}
+   530→                          title="Restore these inputs"
+   531→                          className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-emerald-500/10 hover:text-emerald-600 dark:hover:text-emerald-400"
+   532→                        >
+   533→                          <FolderOpen className="h-3.5 w-3.5" aria-hidden />
+   534→                        </button>
+   535→                        <button
+   536→                          type="button"
+   537→                          onClick={() => deleteScenario(sc)}
+   538→                          aria-label={`Delete scenario ${sc.name}`}
+   539→                          title="Remove this scenario"
+   540→                          className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-rose-500/10 hover:text-rose-600 dark:hover:text-rose-400"
+   541→                        >
+   542→                          <Trash2 className="h-3.5 w-3.5" aria-hidden />
+   543→                        </button>
+   544→                      </div>
+   545→                    </div>
+   546→                    <p className="mt-0.5 truncate text-[11.5px] tabular-nums text-muted-foreground">
+   547→                      {fmtCurrency(sc.pv, { compact: true })} · {fmtPct(sc.cagr)} ·{" "}
+   548→                      {sc.horizon} yrs · {sc.selected.length} market
+   549→                      {sc.selected.length === 1 ? "" : "s"}
+   550→                    </p>
+   551→                  </li>
+   552→                ))}
+   553→              </ul>
+   554→            ) : (
+   555→              <p className="mt-3 rounded-lg border border-dashed p-3 text-[12px] leading-relaxed text-muted-foreground">
+   556→                Save the current inputs as a named hypothesis — comparisons
+   557→                persist locally in this browser and survive reloads.
+   558→              </p>
+   559→            )}
+   560→          </div>
+   561→        </div>
+   562→
+   563→        {/* Chart + milestones */}
+   564→        <div className="space-y-4 lg:col-span-3">
+   565→          <div className="rounded-xl border bg-card p-4 shadow-sm sm:p-6">
+   566→            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+   567→              <div className="flex items-center gap-2">
+   568→                <LineChartIcon className="h-4 w-4 text-muted-foreground" aria-hidden />
+   569→                <MicroLabel>
+   570→                  Appreciation Curves · {START_YEAR}–{endYear}
+   571→                </MicroLabel>
+   572→              </div>
+   573→              <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11.5px] text-muted-foreground">
+   574→                {selectedMarkets.map((s, i) => (
+   575→                  <span key={s.slug} className="inline-flex items-center gap-1.5">
+   576→                    <span
+   577→                      className="h-2 w-2 rounded-full"
+   578→                      style={{ backgroundColor: PALETTE[i % PALETTE.length] }}
+   579→                      aria-hidden
+   580→                    />
+   581→                    {s.name}
+   582→                  </span>
+   583→                ))}
+   584→                {showScenario ? (
+   585→                  <span className="inline-flex items-center gap-1.5">
+   586→                    <span
+   587→                      className="h-0.5 w-4 rounded"
+   588→                      style={{
+   589→                        backgroundColor: SCENARIO_COLOR,
+   590→                        borderTop: "2px dashed",
+   591→                      }}
+   592→                      aria-hidden
+   593→                    />
+   594→                    Scenario
+   595→                  </span>
+   596→                ) : null}
+   597→              </div>
+   598→            </div>
+   599→
+   600→            <div className="h-[380px] w-full sm:h-[440px]">
+   601→              <ResponsiveContainer width="100%" height="100%">
+   602→                <LineChart
+   603→                  data={series}
+   604→                  margin={{ top: 10, right: 16, bottom: 0, left: 4 }}
+   605→                >
+   606→                  <CartesianGrid
+   607→                    strokeDasharray="3 3"
+   608→                    className="stroke-border"
+   609→                    vertical={false}
+   610→                  />
+   611→                  <XAxis
+   612→                    dataKey="year"
+   613→                    tick={{ fontSize: 12 }}
+   614→                    tickLine={false}
+   615→                    axisLine={{ strokeWidth: 0 }}
+   616→                    tickFormatter={(y: number) => `${y}`}
+   617→                    className="text-muted-foreground"
+   618→                  />
+   619→                  <YAxis
+   620→                    tick={{ fontSize: 12 }}
+   621→                    tickLine={false}
+   622→                    axisLine={false}
+   623→                    width={56}
+   624→                    tickFormatter={(v: number) => fmtCurrency(v, { compact: true })}
+   625→                    className="text-muted-foreground"
+   626→                  />
+   627→                  <Tooltip
+   628→                    cursor={{ stroke: "var(--border)", strokeDasharray: "4 4" }}
+   629→                    content={
+   630→                      <ChartTooltip depletionBySlug={depletionBySlug} />
+   631→                    }
+   632→                  />
+   633→                  {selectedMarkets.map((s, i) => (
+   634→                    <Line
+   635→                      key={s.slug}
+   636→                      type="monotone"
+   637→                      dataKey={s.slug}
+   638→                      name={s.name}
+   639→                      stroke={PALETTE[i % PALETTE.length]}
+   640→                      strokeWidth={2.25}
+   641→                      dot={false}
+   642→                      activeDot={{ r: 4 }}
+   643→                    />
+   644→                  ))}
+   645→                  {selectedMarkets.map((s, i) => {
+   646→                    const color = PALETTE[i % PALETTE.length];
+   647→                    const nDepletion = s.depletionYear - START_YEAR;
+   648→                    const depletionValue =
+   649→                      nDepletion >= 0 && nDepletion <= horizon
+   650→                        ? futureValue(s.baselinePrice2026, s.projectedCagr, nDepletion)
+   651→                        : null;
+   652→                    return depletionValue !== null ? (
+   653→                      <ReferenceDot
+   654→                        key={`${s.slug}-depletion`}
+   655→                        x={s.depletionYear}
+   656→                        y={depletionValue}
+   657→                        r={6}
+   658→                        fill={color}
+   659→                        stroke="var(--background)"
+   660→                        strokeWidth={2.5}
+   661→                        aria-label={`${s.name} raw land exhausted in ${s.depletionYear}`}
+   662→                      />
+   663→                    ) : null;
+   664→                  })}
+   665→                  {showScenario ? (
+   666→                    <Line
+   667→                      type="monotone"
+   668→                      dataKey="scenario"
+   669→                      name="Your scenario"
+   670→                      stroke={SCENARIO_COLOR}
+   671→                      strokeWidth={2.75}
+   672→                      strokeDasharray="7 5"
+   673→                      dot={false}
+   674→                      activeDot={{ r: 5 }}
+   675→                    />
+   676→                  ) : null}
+   677→                </LineChart>
+   678→              </ResponsiveContainer>
+   679→            </div>
+   680→          </div>
+   681→
+   682→          {/* Land depletion milestone strip */}
+   683→          <div className="rounded-xl border bg-card p-4 shadow-sm sm:p-6">
+   684→            <div className="flex items-center gap-2">
+   685→              <Flame className="h-4 w-4 text-rose-500" aria-hidden />
+   686→              <MicroLabel>Raw Land Exhaustion Milestones</MicroLabel>
+   687→            </div>
+   688→            <p className="mt-1.5 text-[13px] text-muted-foreground">
+   689→              Marked on the chart where each curve crosses its market&apos;s
+   690→              depletion year — the point after which appreciation is pure
+   691→              infill-replacement pricing.
+   692→            </p>
+   693→            <div className="relative mt-6 h-16">
+   694→              <div className="absolute inset-x-0 top-7 h-1 rounded-full bg-muted" />
+   695→              <div className="absolute inset-x-0 top-7 h-1 rounded-full bg-gradient-to-r from-emerald-500/70 via-amber-500/70 to-rose-500/70" />
+   696→              {selectedMarkets.map((s, i) => {
+   697→                const pct = ((s.depletionYear - START_YEAR) / horizon) * 100;
+   698→                const clamped = Math.max(0, Math.min(100, pct));
+   699→                const color = PALETTE[i % PALETTE.length];
+   700→                return (
+   701→                  <div
+   702→                    key={s.slug}
+   703→                    className="absolute flex -translate-x-1/2 flex-col items-center"
+   704→                    style={{ left: `${clamped}%` }}
+   705→                  >
+   706→                    <span
+   707→                      className="h-3.5 w-3.5 rounded-full border-2"
+   708→                      style={{
+   709→                        backgroundColor: color,
+   710→                        borderColor: "var(--background)",
+   711→                        marginTop: "22px",
+   712→                      }}
+   713→                      aria-hidden
+   714→                    />
+   715→                    <span className="mt-1.5 whitespace-nowrap rounded-sm border bg-background px-1.5 py-0.5 text-[10.5px] font-semibold tabular-nums">
+   716→                      {s.name} {s.depletionYear}
+   717→                    </span>
+   718→                  </div>
+   719→                );
+   720→              })}
+   721→              <span className="absolute left-0 top-0 text-[11px] font-semibold tabular-nums text-muted-foreground">
+   722→                {START_YEAR}
+   723→              </span>
+   724→              <span className="absolute right-0 top-0 text-[11px] font-semibold tabular-nums text-muted-foreground">
+   725→                {endYear}
+   726→              </span>
+   727→            </div>
+   728→          </div>
+   729→
+   730→          {/* Per-market outcome cards */}
+   731→          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+   732→            {selectedMarkets.map((s, i) => {
+   733→              const fv = futureValue(s.baselinePrice2026, s.projectedCagr, horizon);
+   734→              const multiple = Math.pow(1 + s.projectedCagr / 100, horizon);
+   735→              const color = PALETTE[i % PALETTE.length];
+   736→              return (
+   737→                <div
+   738→                  key={s.slug}
+   739→                  className="rounded-xl border bg-card p-4 shadow-sm"
+   740→                  style={{ borderLeft: `3px solid ${color}` }}
+   741→                >
+   742→                  <div className="flex items-center justify-between gap-2">
+   743→                    <p className="flex items-center gap-2 text-[14px] font-semibold">
+   744→                      {s.name}
+   745→                      <StateBadge state={s.state} />
+   746→                    </p>
+   747→                    <CagrBadge cagr={s.projectedCagr} showTier={false} />
+   748→                  </div>
+   749→                  <div className="mt-3 flex items-baseline justify-between">
+   750→                    <span className="text-[12px] text-muted-foreground">
+   751→                      {fmtCurrency(s.baselinePrice2026, { compact: true })} →
+   752→                    </span>
+   753→                    <span className="text-lg font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
+   754→                      {fmtCurrency(fv, { compact: true })}
+   755→                    </span>
+   756→                  </div>
+   757→                  <div className="mt-2 flex items-center justify-between text-[12px] text-muted-foreground">
+   758→                    <span className="inline-flex items-center gap-1">
+   759→                      <TrendingUp className="h-3 w-3" aria-hidden />
+   760→                      {multiple.toFixed(2)}× over {horizon} yrs
+   761→                    </span>
+   762→                    <DepletionBadge year={s.depletionYear} />
+   763→                  </div>
+   764→                </div>
+   765→              );
+   766→            })}
+   767→          </div>
+   768→        </div>
+   769→      </div>
+   770→
+   771→      {/* Underlying series table */}
+   772→      <div className="mt-6 overflow-x-auto rounded-xl border bg-card shadow-sm">
+   773→        <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
+   774→          <MicroLabel>Underlying Series · Annual Snapshots</MicroLabel>
+   775→          <button
+   776→            type="button"
+   777→            onClick={exportSeriesCsv}
+   778→            className="inline-flex h-8 items-center gap-2 rounded-lg border bg-background px-3 text-[12.5px] font-medium shadow-sm transition-all hover:border-zinc-400 hover:shadow-sm dark:hover:border-zinc-600 active:scale-[0.98]"
+   779→          >
+   780→            <Download className="h-3.5 w-3.5" aria-hidden />
+   781→            Export series CSV
+   782→          </button>
+   783→        </div>
+   784→        <div className="thin-scroll max-h-72 overflow-auto">
+   785→          <table className="w-full min-w-[640px] text-[13px] tabular-nums">
+   786→            <thead className="sticky top-0 bg-muted/60 backdrop-blur">
+   787→              <tr className="text-left">
+   788→                <th className="px-5 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+   789→                  Year
+   790→                </th>
+   791→                {selectedMarkets.map((s) => (
+   792→                  <th key={s.slug} className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+   793→                    {s.name}
+   794→                  </th>
+   795→                ))}
+   796→                {showScenario ? (
+   797→                  <th className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
+   798→                    Scenario
+   799→                  </th>
+   800→                ) : null}
+   801→              </tr>
+   802→            </thead>
+   803→            <tbody>
+   804→              {series
+   805→                .slice()
+   806→                .reverse()
+   807→                .map((row) => {
+   808→                  const year = Number(row.year);
+   809→                  const is2046 = year === 2046;
+   810→                  return (
+   811→                    <tr
+   812→                      key={year}
+   813→                      className={cn(
+   814→                        "border-t transition-colors hover:bg-muted/40",
+   815→                        is2046 && "bg-emerald-500/[0.06] font-semibold"
+   816→                      )}
+   817→                    >
+   818→                      <td className="px-5 py-2.5">{year}{is2046 ? " ★" : ""}</td>
+   819→                      {selectedMarkets.map((s) => (
+   820→                        <td key={s.slug} className="px-4 py-2.5">
+   821→                          {fmtCurrency(Number(row[s.slug]), { compact: true })}
+   822→                        </td>
+   823→                      ))}
+   824→                      {showScenario ? (
+   825→                        <td className="px-4 py-2.5 text-emerald-700 dark:text-emerald-400">
+   826→                          {fmtCurrency(Number(row.scenario), { compact: true })}
+   827→                        </td>
+   828→                      ) : null}
+   829→                    </tr>
+   830→                  );
+   831→                })}
+   832→            </tbody>
+   833→          </table>
+   834→        </div>
+   835→      </div>
+   836→    </div>
+   837→  );
+   838→}
+   839→

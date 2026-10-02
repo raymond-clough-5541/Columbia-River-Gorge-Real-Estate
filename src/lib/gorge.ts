@@ -161,6 +161,90 @@ export function impliedCagr(pv: number, fv: number, n: number): number {
   return (Math.pow(fv / pv, 1 / n) - 1) * 100;
 }
 
+/* ------------------------------------------------------------------ */
+/* Financing math — amortized mortgages & remaining balances           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Monthly payment (principal + interest) of a fully amortized loan.
+ * M = P · i(1+i)^N / ((1+i)^N − 1), with i = monthly rate, N = term months.
+ */
+export function monthlyPayment(
+  principal: number,
+  annualRatePct: number,
+  years: number
+): number {
+  if (principal <= 0 || years <= 0) return 0;
+  const i = annualRatePct / 100 / 12;
+  const n = Math.round(years * 12);
+  if (i <= 0) return principal / n;
+  const pow = Math.pow(1 + i, n);
+  return (principal * i * pow) / (pow - 1);
+}
+
+/**
+ * Remaining loan balance after `monthsElapsed` months of on-time payments.
+ * B = P · ((1+i)^N − (1+i)^n) / ((1+i)^N − 1)
+ */
+export function remainingBalance(
+  principal: number,
+  annualRatePct: number,
+  years: number,
+  monthsElapsed: number
+): number {
+  if (principal <= 0 || years <= 0) return 0;
+  const n = Math.round(monthsElapsed);
+  const N = Math.round(years * 12);
+  if (n >= N) return 0;
+  const i = annualRatePct / 100 / 12;
+  if (i <= 0) return (principal * (N - n)) / N;
+  const powN = Math.pow(1 + i, N);
+  const pown = Math.pow(1 + i, n);
+  return (principal * (powN - pown)) / (powN - 1);
+}
+
+/** Total interest paid over the full life of the loan. */
+export function totalInterest(
+  principal: number,
+  annualRatePct: number,
+  years: number
+): number {
+  const N = Math.round(years * 12);
+  return monthlyPayment(principal, annualRatePct, years) * N - principal;
+}
+
+/** Approximate effective annual property-tax rate by state (Gorge counties). */
+export const PROPERTY_TAX_RATES: Record<StateCode, number> = {
+  OR: 0.9, // Hood River / Wasco / Sherman effective averages
+  WA: 0.7, // Klickitat / Skamania effective averages
+};
+
+/** Annual homeowner insurance as a share of structure value (rough heuristic). */
+export const INSURANCE_RATE = 0.0032;
+
+/** Post-depletion "infill replacement" appreciation rate used by the
+ *  depletion-adjusted projection mode: once raw land is exhausted, price
+ *  growth is assumed to cool to replacement-cost inflation. */
+export const POST_DEPLETION_CAGR = 2.5;
+
+/**
+ * Future value with a growth-rate regime switch: compounds at `cagrPct`
+ * until the depletion year, then at the lower post-depletion rate.
+ * Used by the depletion-adjusted projection mode.
+ */
+export function futureValueDepletionAdjusted(
+  pv: number,
+  cagrPct: number,
+  years: number,
+  depletionYear: number,
+  startYear = 2026
+): number {
+  const nPre = Math.max(0, Math.min(years, depletionYear - startYear));
+  const nPost = Math.max(0, years - nPre);
+  const valueAtDepletion = futureValue(pv, cagrPct, nPre);
+  return futureValue(valueAtDepletion, POST_DEPLETION_CAGR, nPost);
+}
+
 export type CagrTier = "elite" | "strong" | "moderate" | "baseline";
 
 export function cagrTier(cagr: number): CagrTier {

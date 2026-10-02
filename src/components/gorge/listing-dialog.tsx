@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Image from "next/image";
-import { Bath, BedDouble, Camera, ChevronLeft, ChevronRight, Ruler, Map as MapIcon } from "lucide-react";
+import { Bath, BedDouble, Camera, ChevronLeft, ChevronRight, Printer, Ruler, Map as MapIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -20,6 +20,7 @@ import {
   type PropertyListing,
 } from "@/lib/gorge";
 import type { NavigateFn } from "./gorge-app";
+import { FinancingLab } from "./financing-lab";
 import { KeyStatRow, MicroLabel, StateBadge } from "./shared";
 
 /* ---------------------------------------------------------------- */
@@ -222,9 +223,22 @@ export function ListingDialog({
             {listing.description}
           </p>
 
+          <FinancingLab listing={listing} />
+
           {sm ? (
             <div className="rounded-lg border bg-background p-4">
-              <MicroLabel>Micro-Market Context · {sm.name}</MicroLabel>
+              <div className="flex items-center justify-between gap-2">
+                <MicroLabel>Micro-Market Context · {sm.name}</MicroLabel>
+                <button
+                  type="button"
+                  data-print="hide"
+                  onClick={() => window.print()}
+                  className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border bg-card px-2.5 text-[11px] font-semibold text-muted-foreground transition-colors hover:border-zinc-400 hover:text-foreground dark:hover:border-zinc-600 active:scale-[0.97]"
+                >
+                  <Printer className="h-3 w-3" aria-hidden />
+                  Print dossier
+                </button>
+              </div>
               <div className="mt-2 px-0.5 py-0.5">
                 <KeyStatRow label="Regulatory framework" value={sm.regulatoryFramework} />
                 <KeyStatRow label="Projected 20-yr CAGR" value={fmtPct(sm.projectedCagr)} />
