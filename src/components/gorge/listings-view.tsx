@@ -294,6 +294,11 @@ function WatchlistDataMenu({
   const { toast } = useToast();
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [preview, setPreview] = useState<RestorePreview | null>(null);
+  /* Round 9 — cross-device merge strategy. "replace" keeps the round-8
+   * semantics (file overwrites the starred set); "merge" unions the file's
+   * known ids with the live watchlist (file order first, current-only ids
+   * appended) so restoring on a second device never drops local stars. */
+  const [restoreMode, setRestoreMode] = useState<"replace" | "merge">("replace");
 
   const exportJson = () => {
     if (watchlist.length === 0) {
@@ -352,6 +357,9 @@ function WatchlistDataMenu({
             year: "numeric",
           });
       setPreview({ doc, known, exportedLabel });
+      // Every freshly-read file starts the mode selector at the conservative
+      // default — a deliberate second click is required to merge.
+      setRestoreMode("replace");
     };
     reader.onerror = () => {
       toast({
@@ -363,22 +371,47 @@ function WatchlistDataMenu({
     reader.readAsText(file);
   };
 
-  /** Commit the reviewed restore — replaces the live watchlist with the
-   *  file's known ids. Fires from the dialog's confirm button (event-time
-   *  toast, never inside a state updater). */
+  /** Commit the reviewed restore. Mode semantics (round 9):
+   *  - replace: the file's known ids become the whole starred set (round-8
+   *    behavior — intentional overwrite).
+   *  - merge: union with the live watchlist — file ids first, then any
+   *    current stars the file doesn't know about. Unknown-id skipping
+   *    applies to both modes. Fires from the dialog's confirm button
+   *    (event-time toast, never inside a state updater). */
   const confirmRestore = () => {
     if (!preview) return;
     const skipped = preview.doc.ids.length - preview.known.length;
-    restoreWatchlist(preview.known);
-    toast({
-      title: preview.known.length > 0 ? "Watchlist restored" : "Nothing to restore",
-      description:
-        preview.known.length > 0
-          ? `${preview.known.length} listing${preview.known.length === 1 ? "" : "s"} re-starred${
-              skipped > 0 ? ` · ${skipped} unknown id${skipped === 1 ? "" : "s"} skipped` : ""
-            }.`
-          : "None of the file's listings match this inventory.",
-    });
+    const target =
+      restoreMode === "merge"
+        ? [
+            ...preview.known,
+            ...watchlist.filter((id) => !preview.known.includes(id)),
+          ]
+        : preview.known;
+    const added = preview.known.filter((id) => !watchlist.includes(id)).length;
+    restoreWatchlist(target);
+    if (preview.known.length === 0) {
+      toast({
+        title: "Nothing to restore",
+        description: "None of the file's listings match this inventory.",
+      });
+    } else if (restoreMode === "merge") {
+      toast({
+        title: "Watchlist merged",
+        description: `${target.length} starred after the merge — ${added} added from the file${
+          skipped > 0 ? ` · ${skipped} unknown id${skipped === 1 ? "" : "s"} skipped` : ""
+        }.`,
+      });
+    } else {
+      toast({
+        title: "Watchlist restored",
+        description: `${preview.known.length} listing${
+          preview.known.length === 1 ? "" : "s"
+        } re-starred${
+          skipped > 0 ? ` · ${skipped} unknown id${skipped === 1 ? "" : "s"} skipped` : ""
+        }.`,
+      });
+    }
     setPreview(null);
   };
 
@@ -573,7 +606,40 @@ export function ListingsView({
   const watchlist = useWatchlist();
   const [results, setResults] = useState<PropertyListing[]>(listings);
   const [loading, setLoading] = useState(false);
-  const [detailId, setDetailId] = useState<string | null>(null);
+  /* Palette dossier jump (round 9). The command palette stamps
+     sessionStorage["crgnsa-open-listing"] right before navigating here.
+     Dual-path consumption: (a) this lazy initializer covers the fresh-mount
+     case (the palette navigated from another workspace), and (b) the
+     custom-event subscription below covers the already-mounted case (the
+     palette was opened while ON the listings view). The lazy initializer is
+     the established lint-clean, hydration-safe pattern — the view only
+     mounts client-side under the hash router's server snapshot. */
+  const [detailId, setDetailId] = useState<string | null>(() => {
+    try {
+      const flagged = sessionStorage.getItem("crgnsa-open-listing");
+      if (flagged) {
+        sessionStorage.removeItem("crgnsa-open-listing");
+        return listings.some((l) => l.id === flagged) ? flagged : null;
+      }
+    } catch {
+      /* storage unavailable — no dossier pre-open */
+    }
+    return null;
+  });
+
+  // Already-mounted path: the palette dispatches the same contract as a
+  // window CustomEvent so the dossier opens without a remount.
+  useEffect(() => {
+    const onPaletteOpenListing = (e: Event) => {
+      const id = (e as CustomEvent<string>).detail;
+      if (typeof id === "string" && listings.some((l) => l.id === id)) {
+        setDetailId(id);
+      }
+    };
+    window.addEventListener("crgnsa-open-listing", onPaletteOpenListing);
+    return () =>
+      window.removeEventListener("crgnsa-open-listing", onPaletteOpenListing);
+  }, [listings]);
 
   const featured = useMemo(
     () => listings.find((l) => l.featured) ?? null,

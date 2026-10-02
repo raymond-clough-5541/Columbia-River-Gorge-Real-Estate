@@ -3,8 +3,12 @@
 import { useEffect } from "react";
 import { useTheme } from "next-themes";
 import {
+  Building2,
   Compass,
+  Grape,
+  Home,
   Keyboard,
+  LandPlot,
   LineChart,
   Map,
   Moon,
@@ -23,16 +27,23 @@ import {
   CommandSeparator,
   CommandShortcut,
 } from "@/components/ui/command";
-import { fmtPct, type Submarket } from "@/lib/gorge";
+import {
+  fmtCurrency,
+  fmtPct,
+  type PropertyListing,
+  type PropertyType,
+  type Submarket,
+} from "@/lib/gorge";
 import type { NavigateFn, Route } from "./gorge-app";
 
 /* ------------------------------------------------------------------ */
-/* Command palette — ⌘K jump-anywhere layer (round 8-f).               */
+/* Command palette — ⌘K jump-anywhere layer (round 8-f, 9-c).          */
 /*                                                                     */
-/* One keystroke surfaces every workspace, all 11 micro-markets, and   */
-/* the quick actions (theme, shortcut reference). cmdk filters on the  */
-/* item's `value` (name + state + county) so "Klickitat" or "WA"      */
-/* finds markets without exact-name matches.                           */
+/* One keystroke surfaces every workspace, all 11 micro-markets, the    */
+/* active listings (round 9-c: dossier pre-open jump), and the quick    */
+/* actions (theme, shortcut reference). cmdk filters on the item's     */
+/* `value` (name + state + county / zoning + type) so "Klickitat",    */
+/* "WA", or "R2" finds items without exact-name matches.              */
 /* ------------------------------------------------------------------ */
 
 const WORKSPACES: {
@@ -72,17 +83,40 @@ const WORKSPACES: {
   },
 ];
 
+/* Property-type → palette icon mapping:
+     Single-Family → Home · Luxury Agricultural/Farm Estate → Grape
+     (Gorge wine-country estate) · Infill Multi-Family → Building2 ·
+     Land Parcel → LandPlot. */
+function listingIcon(propertyType: PropertyType): typeof Home {
+  switch (propertyType) {
+    case "Luxury Agricultural/Farm Estate":
+      return Grape;
+    case "Infill Multi-Family":
+      return Building2;
+    case "Land Parcel":
+      return LandPlot;
+    default:
+      return Home; // "Single-Family" — residential default.
+  }
+}
+
 export function CommandPalette({
   open,
   onOpenChange,
   navigate,
   submarkets,
+  listings = [],
   onOpenShortcuts,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   navigate: NavigateFn;
   submarkets: Submarket[];
+  /** Active listings (round 9-c, orchestrator wiring — optional so the
+   *  palette compiles standalone). Non-empty array renders the Listings
+   * group with dossier pre-open jumps; omitted/empty → no group, no
+   * separator, palette unchanged. */
+  listings?: PropertyListing[];
   onOpenShortcuts: () => void;
 }) {
   const { resolvedTheme, setTheme } = useTheme();
@@ -111,10 +145,16 @@ export function CommandPalette({
       open={open}
       onOpenChange={onOpenChange}
       title="Command palette"
-      description="Jump to any workspace, micro-market, or action."
+      description={`Jump to any workspace, micro-market${
+        listings.length > 0 ? ", listing" : ""
+      }, or action.`}
       className="sm:max-w-[520px]"
     >
-      <CommandInput placeholder="Search workspaces, markets, actions…" />
+      <CommandInput
+        placeholder={`Search workspaces, markets${
+          listings.length > 0 ? ", listings" : ""
+        }, actions…`}
+      />
       <CommandList>
         <CommandEmpty>No matches in the corridor.</CommandEmpty>
 
@@ -183,6 +223,84 @@ export function CommandPalette({
             </CommandItem>
           ))}
         </CommandGroup>
+
+        {listings.length > 0 && (
+          <>
+            <CommandSeparator />
+            <CommandGroup
+              heading={`Listings · ${listings.length} ${
+                listings.length === 1 ? "asset" : "assets"
+              }`}
+            >
+              {listings.map((l) => {
+                const ListingIcon = listingIcon(l.propertyType);
+                const marketName = l.submarket?.name ?? "—";
+                const state = l.submarket?.state;
+                return (
+                  <CommandItem
+                    key={l.id}
+                    value={
+                      `${l.title} ${marketName} ${state ?? ""} ` +
+                      `${l.zoningCode} ${l.propertyType} listing`
+                    }
+                    onSelect={() =>
+                      run(() => {
+                        // Dossier pre-open, dual-path delivery:
+                        // (1) sessionStorage flag — consumed by listings-view
+                        //     when the palette jump mounts it fresh at
+                        //     #/listings (no event listener up yet);
+                        // (2) "crgnsa-open-listing" CustomEvent — caught by an
+                        //     already-mounted listings-view, where navigation
+                        //     is a no-op remount-wise and no effect re-runs.
+                        // Both cues are stamped before the navigate so
+                        // whichever path runs finds its signal in place.
+                        try {
+                          sessionStorage.setItem("crgnsa-open-listing", l.id);
+                        } catch {
+                          // Storage unavailable (private mode / quota) —
+                          // the event path below still carries the jump.
+                        }
+                        window.dispatchEvent(
+                          new CustomEvent("crgnsa-open-listing", {
+                            detail: l.id,
+                          })
+                        );
+                        navigate({ view: "listings" });
+                      })
+                    }
+                    className="gap-2.5"
+                  >
+                    <ListingIcon
+                      className="h-4 w-4 shrink-0 text-muted-foreground"
+                      aria-hidden
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[13.5px] font-medium leading-tight">
+                        {l.title}
+                      </span>
+                      <span className="block truncate text-[11px] text-muted-foreground">
+                        {marketName} ·{" "}
+                        <span
+                          className={
+                            state === "WA"
+                              ? "text-[11px] font-bold tracking-wider text-emerald-600 dark:text-emerald-400"
+                              : "text-[11px] font-bold tracking-wider text-slate-600 dark:text-slate-300"
+                          }
+                        >
+                          {state ?? "—"}
+                        </span>{" "}
+                        · {l.zoningCode}
+                      </span>
+                    </span>
+                    <span className="shrink-0 text-[11px] font-semibold tabular-nums text-muted-foreground">
+                      {fmtCurrency(l.price, { compact: true })}
+                    </span>
+                  </CommandItem>
+                );
+              })}
+            </CommandGroup>
+          </>
+        )}
 
         <CommandSeparator />
 

@@ -9,6 +9,7 @@ import {
   FlaskConical,
   GitCompareArrows,
   Info,
+  Pencil,
   PiggyBank,
   TrendingUp,
   X,
@@ -42,6 +43,7 @@ import {
   INSURANCE_RATE,
   PROPERTY_TAX_RATES,
   RENTAL_RESERVE_RATE,
+  SEASONAL_RENT_BANDS,
   estimateMarketRent,
   fmtAcres,
   fmtCurrency,
@@ -52,9 +54,10 @@ import {
   type ListingSubmarketSummary,
   type PropertyListing,
   type PropertyType,
+  type RentSeasonality,
   type Submarket,
 } from "@/lib/gorge";
-import { StateBadge } from "./shared";
+import { MicroLabel, StateBadge } from "./shared";
 /* ------------------------------------------------------------------ */
 /* Watchlist comparison sheet — starred listings side-by-side with     */
 /* financing + income-lens metrics, best-in-class highlighting, and    */
@@ -62,6 +65,11 @@ import { StateBadge } from "./shared";
 /* hypothetical "what-if" columns (amber) side by side — entry vs      */
 /* premium vs land play — each underwritten by the exact same sheet    */
 /* + winner logic as the live listings.                                */
+/* Round 9-a: the what-ifs are EDITABLE in place (each column's pencil  */
+/* reuses the same editor form; saving keeps the column id and order  */
+/* so CSV exports stay stable), and a header season control bends    */
+/* every column's rent onto the lean/annual/peak tourism band the    */
+/* Financing Lab already uses.                                        */
 /* ------------------------------------------------------------------ */
 
 /** Standard underwriting posture for the sheet (documented in the header). */
@@ -135,6 +143,20 @@ const clampWhatIfNumber = (raw: string, min: number, max: number): number => {
   return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : min;
 };
 
+/* -------------------- seasonality band (round 9-a) -------------------- */
+
+/** Season band order for the header segmented control — mirrors the
+ *  Financing Lab's Income Lens radiogroup (lib/gorge.ts owns the band
+ *  math) so the two surfaces can never drift apart. */
+const SEASON_ORDER: RentSeasonality[] = ["lean", "annualized", "peak"];
+/** Compact control labels — "Annualized" is wider than the sheet header
+ *  can spare on mobile; the tooltip carries the full band note. */
+const SEASON_SHORT: Record<RentSeasonality, string> = {
+  lean: "Lean",
+  annualized: "Annual",
+  peak: "Peak",
+};
+
 interface WhatIfForm {
   price: string;
   type: PropertyType;
@@ -161,7 +183,13 @@ interface CompareMetrics {
   runway: number;
 }
 
-function underwrite(l: PropertyListing): CompareMetrics {
+/** Underwrite one listing on the sheet's standard posture. `season`
+ *  (round 9-a) bends the market-indexed rent estimate onto the tourism
+ *  band before any rent-derived row is computed from it. */
+function underwrite(
+  l: PropertyListing,
+  season: RentSeasonality
+): CompareMetrics {
   const isLand = l.propertyType === "Land Parcel" || l.squareFeet === 0;
   const price = Math.max(1, l.price);
   const downPct = isLand ? LAND_DOWN_PCT : SHEET_DOWN_PCT;
@@ -174,7 +202,9 @@ function underwrite(l: PropertyListing): CompareMetrics {
   const ins = isLand ? 0 : (price * INSURANCE_RATE) / 12;
   const monthlyCarry = pi + tax + ins;
 
-  const rent = estimateMarketRent(l); // market-indexed per round 6
+  // Market-indexed per round 6, then bent by the sheet-wide seasonality
+  // band (round 9-a) — lean/peak stress-tests every rent-derived row.
+  const rent = estimateMarketRent(l, { seasonality: season });
   const grossAnnual = (rent.dwelling + rent.agriculture) * 12;
   const noi = grossAnnual * (1 - RENTAL_RESERVE_RATE);
   const cagr = l.submarket?.projectedCagr ?? 5;
@@ -370,6 +400,15 @@ export function CompareSheet({
      and reopening the sheet for the whole session. */
   const [whatIfs, setWhatIfs] = useState<PropertyListing[]>([]);
   const [editorOpen, setEditorOpen] = useState(false);
+  /** Round 9-a editor mode: null → ADD (header trigger), "what-if-N" →
+   *  EDIT that entry (its column pencil). Saving an edit replaces the
+   *  entry in place, so the id — and with it column order and CSV
+   *  stability — survives. */
+  const [editingId, setEditingId] = useState<string | null>(null);
+  /** Round 9-a seasonality band applied to EVERY column's rent estimate,
+   *  starred listings and what-ifs alike. Defaults to "annualized" so
+   *  the sheet and the Financing Lab agree out of the box. */
+  const [season, setSeason] = useState<RentSeasonality>("annualized");
   const [form, setForm] = useState<WhatIfForm>({
     price: "",
     type: "Single-Family",
@@ -384,9 +423,14 @@ export function CompareSheet({
     [submarkets]
   );
 
+  // Explicit lambdas (not `.map(underwrite)`) — Array.map would pass
+  // the index as the second arg; the season must reach every column.
   const entries = useMemo(
-    () => [...starred.map(underwrite), ...whatIfs.map(underwrite)],
-    [starred, whatIfs]
+    () => [
+      ...starred.map((l) => underwrite(l, season)),
+      ...whatIfs.map((l) => underwrite(l, season)),
+    ],
+    [starred, whatIfs, season]
   );
 
   const bestIncome = useMemo(() => {
@@ -400,12 +444,22 @@ export function CompareSheet({
   }, [entries]);
 
   /* ---- What-if editor plumbing (all toasts fire in event handlers,
-     never inside state updaters — the round-6 bug class). The editor is
-     ADD-only as of round 8-a: every open resets to starred-derived
-     defaults, and the 3-entry limit is gated here so a 4th column can
-     never even open the form. ---- */
+     never inside state updaters — the round-6 bug class). One shared
+     form serves TWO anchors as of round 9-a: the header "Add what-if"
+     trigger (add mode — starred-derived defaults, 3-entry gate at open)
+     and each column's pencil (edit mode — prefilled from that entry,
+     replaces in place so editing can never exceed the limit). Radix
+     unmounts closed popover content, so the shared field ids can never
+     duplicate in the DOM across the N+1 anchors. ---- */
 
   const canWhatIf = starred.length >= 2 && sortedSubmarkets.length > 0;
+  const isEditing = editingId !== null;
+  /** Auto-label dedupe peers — the entry being edited must not count
+   *  against its own next label, else "What-if $600k" couldn't keep its
+   *  name through a price tweak. */
+  const editorPeers = isEditing
+    ? whatIfs.filter((w) => w.id !== editingId)
+    : whatIfs;
 
   /** Median starred asking price, rounded to the nearest $5k. */
   const defaultWhatIfPrice = useMemo(() => {
@@ -419,41 +473,75 @@ export function CompareSheet({
     return Math.round(median / WHAT_IF_PRICE_STEP) * WHAT_IF_PRICE_STEP;
   }, [starred]);
 
-  const handleEditorOpenChange = (next: boolean) => {
+  const handleEditorOpenChange = (
+    next: boolean,
+    editTarget: PropertyListing | null = null
+  ) => {
     if (next) {
-      // Limit gate at open time (event-handler context, never an updater) —
-      // the toast fires once per click and the popover simply stays closed.
-      if (whatIfs.length >= WHAT_IF_MAX) {
-        toast({
-          title: "What-if limit reached",
-          description:
-            "Three hypotheticals at a time — remove one to add another.",
+      if (editTarget) {
+        // EDIT mode — prefilled from the entry; no limit gate, because a
+        // save replaces that entry in place and can never grow a 4th
+        // column. The market prefills from the entry's own submarket,
+        // falling back to the first sorted slug if it ever disappears
+        // from the live submarket list mid-session.
+        setEditingId(editTarget.id);
+        setForm({
+          price: String(editTarget.price),
+          type: editTarget.propertyType,
+          market: sortedSubmarkets.some(
+            (s) => s.slug === editTarget.submarket?.slug
+          )
+            ? (editTarget.submarket?.slug ?? "")
+            : (sortedSubmarkets[0]?.slug ?? ""),
+          sqft: String(editTarget.squareFeet),
+          acreage: String(editTarget.acreage),
+          label: editTarget.title,
         });
-        return;
+      } else {
+        // ADD mode — limit gate at open time (event-handler context,
+        // never an updater): the toast fires once per click and the
+        // popover simply stays closed.
+        if (whatIfs.length >= WHAT_IF_MAX) {
+          toast({
+            title: "What-if limit reached",
+            description:
+              "Three hypotheticals at a time — remove one to add another.",
+          });
+          return;
+        }
+        setEditingId(null);
+        const firstStarredSlug = starred[0]?.submarket?.slug ?? "";
+        const defaultSlug = sortedSubmarkets.some(
+          (s) => s.slug === firstStarredSlug
+        )
+          ? firstStarredSlug
+          : (sortedSubmarkets[0]?.slug ?? "");
+        setForm({
+          price: String(defaultWhatIfPrice),
+          type: "Single-Family",
+          market: defaultSlug,
+          sqft: String(WHAT_IF_DEFAULT_SQFT),
+          acreage: String(WHAT_IF_DEFAULT_ACREAGE),
+          label: "",
+        });
       }
-      const firstStarredSlug = starred[0]?.submarket?.slug ?? "";
-      const defaultSlug = sortedSubmarkets.some(
-        (s) => s.slug === firstStarredSlug
-      )
-        ? firstStarredSlug
-        : (sortedSubmarkets[0]?.slug ?? "");
-      setForm({
-        price: String(defaultWhatIfPrice),
-        type: "Single-Family",
-        market: defaultSlug,
-        sqft: String(WHAT_IF_DEFAULT_SQFT),
-        acreage: String(WHAT_IF_DEFAULT_ACREAGE),
-        label: "",
-      });
+    } else {
+      // Closing is silent for BOTH modes — Escape/Cancel discards an
+      // in-flight edit with no toast (the quieter option). Pointerdown
+      // dismissal always precedes the next trigger's click, so clearing
+      // the mode here can't race the subsequent open.
+      setEditingId(null);
     }
     setEditorOpen(next);
   };
 
   const submitWhatIf = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    // Defensive double-gate: the popover can't open at the limit, but a
-    // stray Enter (or a future programmatic submit) must not grow a 4th column.
-    if (whatIfs.length >= WHAT_IF_MAX) {
+    // Defensive double-gate — ADD mode only: the popover can't open at
+    // the limit, but a stray Enter (or a future programmatic submit) must
+    // not grow a 4th column. Editing replaces an entry in place, so it
+    // is exempt by construction.
+    if (!isEditing && whatIfs.length >= WHAT_IF_MAX) {
       toast({
         title: "What-if limit reached",
         description:
@@ -483,7 +571,10 @@ export function CompareSheet({
     const price = Math.round(parsed / WHAT_IF_PRICE_STEP) * WHAT_IF_PRICE_STEP;
     const sqft = clampWhatIfNumber(form.sqft, 0, WHAT_IF_MAX_SQFT);
     const acreage = clampWhatIfNumber(form.acreage, 0, WHAT_IF_MAX_ACREAGE);
-    const label = form.label.trim() || uniqueAutoWhatIfLabel(price, whatIfs);
+    // editorPeers: in edit mode the entry's own title steps aside so it
+    // can keep (or reclaim) its auto-label without colliding with itself.
+    const label =
+      form.label.trim() || uniqueAutoWhatIfLabel(price, editorPeers);
     const submarket: ListingSubmarketSummary = {
       slug: market.slug,
       name: market.name,
@@ -495,6 +586,39 @@ export function CompareSheet({
       baselinePrice2026: market.baselinePrice2026,
     };
     const isLand = form.type === "Land Parcel" || sqft === 0;
+
+    if (editingId !== null) {
+      // EDIT save — swap the fields in place so the what-if-N id, the
+      // column order and every CSV export after it stay identical;
+      // createdAt too, since it's the same hypothesis re-tuned, not a
+      // new one.
+      const targetId = editingId;
+      setWhatIfs((prev) =>
+        prev.map((w) =>
+          w.id === targetId
+            ? {
+                ...w,
+                title: label,
+                propertyType: form.type,
+                price,
+                acreage,
+                bedrooms: isLand ? 0 : 3,
+                bathrooms: isLand ? 0 : 2,
+                squareFeet: sqft,
+                submarket,
+              }
+            : w
+        )
+      );
+      setEditingId(null);
+      setEditorOpen(false);
+      toast({
+        title: "What-if updated",
+        description: `${label} re-underwritten — ${fmtCurrency(price)} · ${market.name} (${market.state}) — same column, same sheet.`,
+      });
+      return;
+    }
+
     const id = whatIfId(nextWhatIfSlot(whatIfs));
     setWhatIfs((prev) => [
       ...prev,
@@ -554,8 +678,15 @@ export function CompareSheet({
 
   const exportCsv = () => {
     if (entries.length === 0) return;
+    // Season tag follows the file's `(what-if)` suffix convention — it
+    // rides the corner header cell so the export stays one flat header
+    // row (nothing for downstream parsers to trip on), and the toast
+    // repeats it because the file outlives the toast.
+    const band = SEASONAL_RENT_BANDS[season];
+    const seasonTag =
+      season === "annualized" ? "" : ` (${season}-season rents ×${band.mult.toFixed(2)})`;
     const headers: string[] = [
-      "Metric",
+      `Metric${seasonTag}`,
       ...entries.map((m) =>
         isWhatIf(m.listing.id)
           ? `${m.listing.title} (what-if)`
@@ -572,9 +703,215 @@ export function CompareSheet({
     );
     toast({
       title: "Comparison exported",
-      description: `${entries.length} underwritten column${entries.length === 1 ? "" : "s"} → CSV.`,
+      description: `${entries.length} underwritten column${
+        entries.length === 1 ? "" : "s"
+      } → CSV${
+        season === "annualized"
+          ? ""
+          : ` · rents at the ${season}-season band (×${band.mult.toFixed(2)})`
+      }.`,
     });
   };
+
+  /* Round 9-a: the what-if editor form, hoisted out of the ADD popover
+     so each column's pencil can mount the exact same fields in EDIT
+     mode. Mode is derived from editingId — null renders the add
+     defaults; a "what-if-N" id renders the save-in-place posture. */
+  const editorForm = (
+    <form onSubmit={submitWhatIf} className="grid grid-cols-2 gap-2.5">
+      <div className="col-span-2 flex items-center gap-1.5">
+        {isEditing ? (
+          <Pencil
+            className="h-3.5 w-3.5 shrink-0 text-emerald-500"
+            aria-hidden
+          />
+        ) : (
+          <FlaskConical
+            className="h-3.5 w-3.5 shrink-0 text-amber-500"
+            aria-hidden
+          />
+        )}
+        <p className="text-[12.5px] font-semibold">
+          {isEditing ? "Edit what-if" : "Hypothetical listing"}
+        </p>
+      </div>
+      <div className="col-span-2">
+        <label
+          htmlFor="what-if-price"
+          className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground"
+        >
+          Target price
+        </label>
+        <Input
+          id="what-if-price"
+          type="number"
+          inputMode="numeric"
+          min={WHAT_IF_MIN_PRICE}
+          step={WHAT_IF_PRICE_STEP}
+          value={form.price}
+          onChange={(e) =>
+            setForm((f) => ({ ...f, price: e.target.value }))
+          }
+          className="mt-1 h-8 text-[13px] tabular-nums"
+        />
+      </div>
+      <div className="col-span-2">
+        <label
+          htmlFor="what-if-type"
+          className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground"
+        >
+          Product type
+        </label>
+        <Select
+          value={form.type}
+          onValueChange={(v) =>
+            setForm((f) => ({ ...f, type: v as PropertyType }))
+          }
+        >
+          <SelectTrigger
+            id="what-if-type"
+            className="mt-1 h-8 w-full text-[13px]"
+            aria-label="Hypothetical product type"
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {WHAT_IF_TYPES.map((t) => (
+              <SelectItem key={t} value={t} className="text-[13px]">
+                {t}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="col-span-2">
+        <label
+          htmlFor="what-if-market"
+          className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground"
+        >
+          Market
+        </label>
+        <Select
+          value={form.market}
+          onValueChange={(v) => setForm((f) => ({ ...f, market: v }))}
+        >
+          <SelectTrigger
+            id="what-if-market"
+            className="mt-1 h-8 w-full text-[13px]"
+            aria-label="Hypothetical market"
+          >
+            <SelectValue placeholder="Pick a micro-market" />
+          </SelectTrigger>
+          <SelectContent>
+            {sortedSubmarkets.map((s) => (
+              <SelectItem
+                key={s.slug}
+                value={s.slug}
+                className="text-[13px]"
+              >
+                {s.name} ({s.state})
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div>
+        <label
+          htmlFor="what-if-sqft"
+          className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground"
+        >
+          Square feet
+        </label>
+        <Input
+          id="what-if-sqft"
+          type="number"
+          inputMode="numeric"
+          min={0}
+          max={WHAT_IF_MAX_SQFT}
+          step={100}
+          value={form.sqft}
+          onChange={(e) =>
+            setForm((f) => ({ ...f, sqft: e.target.value }))
+          }
+          className="mt-1 h-8 text-[13px] tabular-nums"
+        />
+      </div>
+      <div>
+        <label
+          htmlFor="what-if-acreage"
+          className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground"
+        >
+          Acreage
+        </label>
+        <Input
+          id="what-if-acreage"
+          type="number"
+          inputMode="decimal"
+          min={0}
+          max={WHAT_IF_MAX_ACREAGE}
+          step={0.1}
+          value={form.acreage}
+          onChange={(e) =>
+            setForm((f) => ({ ...f, acreage: e.target.value }))
+          }
+          className="mt-1 h-8 text-[13px] tabular-nums"
+        />
+      </div>
+      {form.type === "Land Parcel" || Number(form.sqft) === 0 ? (
+        <p className="col-span-2 text-[11px] leading-snug text-muted-foreground">
+          Land posture applies — {LAND_DOWN_PCT}% down @ {LAND_RATE}%,
+          no rent until entitlement.
+        </p>
+      ) : null}
+      <div className="col-span-2">
+        <label
+          htmlFor="what-if-label"
+          className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground"
+        >
+          Label · optional
+        </label>
+        <Input
+          id="what-if-label"
+          type="text"
+          value={form.label}
+          onChange={(e) =>
+            setForm((f) => ({ ...f, label: e.target.value }))
+          }
+          className="mt-1 h-8 text-[13px]"
+          placeholder={uniqueAutoWhatIfLabel(previewWhatIfPrice, editorPeers)}
+        />
+      </div>
+      <div className="col-span-2 mt-0.5 flex items-center justify-end gap-2">
+        {/* Quiet cancel — discards an in-flight edit with no toast
+            (Escape does the same through the popover's onOpenChange). */}
+        <Button
+          type="button"
+          variant="ghost"
+          className="h-8 text-[12.5px]"
+          onClick={() => handleEditorOpenChange(false)}
+        >
+          Cancel
+        </Button>
+        <Button
+          type="submit"
+          className={cn(
+            "h-8 gap-1.5 text-[12.5px] text-white dark:text-zinc-950",
+            isEditing
+              ? // Emerald accent — confirming an edit, not adding a column.
+                "bg-emerald-600 hover:bg-emerald-500 dark:bg-emerald-500 dark:hover:bg-emerald-400"
+              : "bg-zinc-900 hover:bg-zinc-800 dark:bg-emerald-500 dark:hover:bg-emerald-400"
+          )}
+        >
+          {isEditing ? (
+            <Pencil className="h-3.5 w-3.5" aria-hidden />
+          ) : (
+            <FlaskConical className="h-3.5 w-3.5" aria-hidden />
+          )}
+          {isEditing ? "Save changes" : "Add to sheet"}
+        </Button>
+      </div>
+    </form>
+  );
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -595,6 +932,14 @@ export function CompareSheet({
                   sheet — {SHEET_DOWN_PCT}% down @ {SHEET_RATE}% over {SHEET_TERM}
                   yrs (land: {LAND_DOWN_PCT}% @ {LAND_RATE}%), base rent posture,
                   8% operating reserve. Emerald = best in class.
+                  {season !== "annualized" ? (
+                    /* Muted by design — the amber what-if clause below
+                       stays this description's only accent. */
+                    <>
+                      {" "}
+                      · {season === "peak" ? "peak" : "lean"}-season rents
+                    </>
+                  ) : null}
                   {whatIfs.length > 0 ? (
                     /* Subtle amber clause — inline span so the description
                        reflows without layout-shift risk. */
@@ -609,216 +954,83 @@ export function CompareSheet({
                 "Star at least two listings to compare them side-by-side."
               )}
             </SheetDescription>
-            {canWhatIf ? (
-              <Popover open={editorOpen} onOpenChange={handleEditorOpenChange}>
-                <PopoverTrigger asChild>
-                  <button
-                    type="button"
-                    title={
-                      whatIfs.length >= WHAT_IF_MAX
-                        ? "Three hypotheticals are already on the sheet — remove one to add another"
-                        : "Underwrite a hypothetical listing at a target price point — up to three side by side"
-                    }
-                    className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-dashed border-amber-400/60 bg-amber-400/[0.04] px-2.5 text-[12px] font-medium text-amber-700 transition-all hover:border-amber-400 hover:bg-amber-400/10 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/70 dark:text-amber-300 dark:hover:bg-amber-400/10"
-                  >
-                    <FlaskConical className="h-3.5 w-3.5" aria-hidden />
-                    Add what-if
-                    {whatIfs.length > 0 ? (
-                      <span className="rounded-sm bg-amber-400/15 px-1 text-[10.5px] font-bold tabular-nums">
-                        {whatIfs.length}/{WHAT_IF_MAX}
-                      </span>
-                    ) : null}
-                  </button>
-                </PopoverTrigger>
-                <PopoverContent
-                  align="end"
-                  aria-label="Hypothetical what-if listing editor"
-                  className="w-[320px] max-w-[calc(100vw-1.5rem)] p-3.5"
+            {starred.length >= 2 ? (
+              <div className="flex shrink-0 flex-wrap items-center gap-2.5">
+                {/* Seasonality band (round 9-a) — same radiogroup semantics
+                    as the Financing Lab's Income Lens so muscle memory
+                    transfers; lib/gorge.ts owns the multipliers, so the two
+                    surfaces can't drift. All-land sheets render it too — it
+                    simply has no rent rows to bend there. */}
+                <div
+                  className="flex items-center gap-1.5"
+                  title="Applies the seasonal rent band (×0.88 lean / ×1.15 peak) to every column's rent estimate"
                 >
-                  <form
-                    onSubmit={submitWhatIf}
-                    className="grid grid-cols-2 gap-2.5"
+                  <MicroLabel className="text-[10px] tracking-wider">
+                    Rent season
+                  </MicroLabel>
+                  <div
+                    role="radiogroup"
+                    aria-label="Rent seasonality band"
+                    className="flex rounded-md border bg-background p-0.5"
                   >
-                    <div className="col-span-2 flex items-center gap-1.5">
-                      <FlaskConical
-                        className="h-3.5 w-3.5 shrink-0 text-amber-500"
-                        aria-hidden
-                      />
-                      <p className="text-[12.5px] font-semibold">
-                        Hypothetical listing
-                      </p>
-                    </div>
-                    <div className="col-span-2">
-                      <label
-                        htmlFor="what-if-price"
-                        className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground"
-                      >
-                        Target price
-                      </label>
-                      <Input
-                        id="what-if-price"
-                        type="number"
-                        inputMode="numeric"
-                        min={WHAT_IF_MIN_PRICE}
-                        step={WHAT_IF_PRICE_STEP}
-                        value={form.price}
-                        onChange={(e) =>
-                          setForm((f) => ({ ...f, price: e.target.value }))
-                        }
-                        className="mt-1 h-8 text-[13px] tabular-nums"
-                      />
-                    </div>
-                    <div className="col-span-2">
-                      <label
-                        htmlFor="what-if-type"
-                        className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground"
-                      >
-                        Product type
-                      </label>
-                      <Select
-                        value={form.type}
-                        onValueChange={(v) =>
-                          setForm((f) => ({ ...f, type: v as PropertyType }))
-                        }
-                      >
-                        <SelectTrigger
-                          id="what-if-type"
-                          className="mt-1 h-8 w-full text-[13px]"
-                          aria-label="Hypothetical product type"
+                    {SEASON_ORDER.map((id) => {
+                      const band = SEASONAL_RENT_BANDS[id];
+                      const active = season === id;
+                      return (
+                        <button
+                          key={id}
+                          type="button"
+                          role="radio"
+                          aria-checked={active}
+                          onClick={() => setSeason(id)}
+                          title={`${band.note} · rent × ${band.mult.toFixed(2)}`}
+                          className={cn(
+                            "h-6 rounded px-2 text-[11px] font-semibold transition-all active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60",
+                            active
+                              ? "bg-zinc-900 text-white dark:bg-emerald-500 dark:text-zinc-950"
+                              : "text-muted-foreground hover:text-foreground"
+                          )}
                         >
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {WHAT_IF_TYPES.map((t) => (
-                            <SelectItem key={t} value={t} className="text-[13px]">
-                              {t}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="col-span-2">
-                      <label
-                        htmlFor="what-if-market"
-                        className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground"
-                      >
-                        Market
-                      </label>
-                      <Select
-                        value={form.market}
-                        onValueChange={(v) =>
-                          setForm((f) => ({ ...f, market: v }))
-                        }
-                      >
-                        <SelectTrigger
-                          id="what-if-market"
-                          className="mt-1 h-8 w-full text-[13px]"
-                          aria-label="Hypothetical market"
-                        >
-                          <SelectValue placeholder="Pick a micro-market" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {sortedSubmarkets.map((s) => (
-                            <SelectItem
-                              key={s.slug}
-                              value={s.slug}
-                              className="text-[13px]"
-                            >
-                              {s.name} ({s.state})
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div>
-                      <label
-                        htmlFor="what-if-sqft"
-                        className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground"
-                      >
-                        Square feet
-                      </label>
-                      <Input
-                        id="what-if-sqft"
-                        type="number"
-                        inputMode="numeric"
-                        min={0}
-                        max={WHAT_IF_MAX_SQFT}
-                        step={100}
-                        value={form.sqft}
-                        onChange={(e) =>
-                          setForm((f) => ({ ...f, sqft: e.target.value }))
-                        }
-                        className="mt-1 h-8 text-[13px] tabular-nums"
-                      />
-                    </div>
-                    <div>
-                      <label
-                        htmlFor="what-if-acreage"
-                        className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground"
-                      >
-                        Acreage
-                      </label>
-                      <Input
-                        id="what-if-acreage"
-                        type="number"
-                        inputMode="decimal"
-                        min={0}
-                        max={WHAT_IF_MAX_ACREAGE}
-                        step={0.1}
-                        value={form.acreage}
-                        onChange={(e) =>
-                          setForm((f) => ({ ...f, acreage: e.target.value }))
-                        }
-                        className="mt-1 h-8 text-[13px] tabular-nums"
-                      />
-                    </div>
-                    {form.type === "Land Parcel" || Number(form.sqft) === 0 ? (
-                      <p className="col-span-2 text-[11px] leading-snug text-muted-foreground">
-                        Land posture applies — {LAND_DOWN_PCT}% down @ {LAND_RATE}%,
-                        no rent until entitlement.
-                      </p>
-                    ) : null}
-                    <div className="col-span-2">
-                      <label
-                        htmlFor="what-if-label"
-                        className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground"
-                      >
-                        Label · optional
-                      </label>
-                      <Input
-                        id="what-if-label"
-                        type="text"
-                        value={form.label}
-                        onChange={(e) =>
-                          setForm((f) => ({ ...f, label: e.target.value }))
-                        }
-                        className="mt-1 h-8 text-[13px]"
-                        placeholder={uniqueAutoWhatIfLabel(
-                          previewWhatIfPrice,
-                          whatIfs
-                        )}
-                      />
-                    </div>
-                    <div className="col-span-2 mt-0.5 flex items-center justify-end gap-2">
-                      <Button
+                          {SEASON_SHORT[id]}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                {canWhatIf ? (
+                  <Popover
+                    open={editorOpen && !isEditing}
+                    onOpenChange={handleEditorOpenChange}
+                  >
+                    <PopoverTrigger asChild>
+                      <button
                         type="button"
-                        variant="ghost"
-                        className="h-8 text-[12.5px]"
-                        onClick={() => setEditorOpen(false)}
-                      >
-                        Cancel
-                      </Button>
-                      <Button
-                        type="submit"
-                        className="h-8 gap-1.5 bg-zinc-900 text-[12.5px] text-white hover:bg-zinc-800 dark:bg-emerald-500 dark:text-zinc-950 dark:hover:bg-emerald-400"
+                        title={
+                          whatIfs.length >= WHAT_IF_MAX
+                            ? "Three hypotheticals are already on the sheet — remove one to add another"
+                            : "Underwrite a hypothetical listing at a target price point — up to three side by side"
+                        }
+                        className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-dashed border-amber-400/60 bg-amber-400/[0.04] px-2.5 text-[12px] font-medium text-amber-700 transition-all hover:border-amber-400 hover:bg-amber-400/10 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/70 dark:text-amber-300 dark:hover:bg-amber-400/10"
                       >
                         <FlaskConical className="h-3.5 w-3.5" aria-hidden />
-                        Add to sheet
-                      </Button>
-                    </div>
-                  </form>
-                </PopoverContent>
-              </Popover>
+                        Add what-if
+                        {whatIfs.length > 0 ? (
+                          <span className="rounded-sm bg-amber-400/15 px-1 text-[10.5px] font-bold tabular-nums">
+                            {whatIfs.length}/{WHAT_IF_MAX}
+                          </span>
+                        ) : null}
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent
+                      align="end"
+                      aria-label="Hypothetical what-if listing editor"
+                      className="w-[320px] max-w-[calc(100vw-1.5rem)] p-3.5"
+                    >
+                      {editorForm}
+                    </PopoverContent>
+                  </Popover>
+                ) : null}
+              </div>
             ) : null}
           </div>
         </SheetHeader>
@@ -926,15 +1138,45 @@ export function CompareSheet({
                             WHAT-IF
                           </span>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => removeWhatIf(m.listing)}
-                          aria-label={`Remove the ${m.listing.title} what-if`}
-                          title={`Remove the ${m.listing.title} what-if`}
-                          className="absolute right-1.5 top-1.5 z-10 flex h-6 w-6 items-center justify-center rounded-md border border-amber-400/40 bg-background/90 text-muted-foreground shadow-sm backdrop-blur-sm transition-colors hover:border-rose-400/60 hover:text-rose-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/70 dark:hover:text-rose-400"
-                        >
-                          <X className="h-3.5 w-3.5" aria-hidden />
-                        </button>
+                        {/* Round 9-a affordances, stacked in the corner:
+                            the pencil reopens the shared editor prefilled
+                            with this entry (saving replaces in place, so
+                            the id and column order survive); X drops it. */}
+                        <div className="absolute right-1.5 top-1.5 z-10 flex items-center gap-1">
+                          <Popover
+                            open={editorOpen && editingId === m.listing.id}
+                            onOpenChange={(next) =>
+                              handleEditorOpenChange(next, m.listing)
+                            }
+                          >
+                            <PopoverTrigger asChild>
+                              <button
+                                type="button"
+                                title="Edit this what-if"
+                                aria-label={`Edit the ${m.listing.title} what-if`}
+                                className="flex h-6 w-6 items-center justify-center rounded-md border border-amber-400/40 bg-background/90 text-muted-foreground shadow-sm backdrop-blur-sm transition-colors hover:border-amber-400/70 hover:text-amber-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/70 dark:hover:text-amber-300"
+                              >
+                                <Pencil className="h-3 w-3" aria-hidden />
+                              </button>
+                            </PopoverTrigger>
+                            <PopoverContent
+                              align="start"
+                              aria-label={`Edit the ${m.listing.title} what-if`}
+                              className="w-[320px] max-w-[calc(100vw-1.5rem)] p-3.5"
+                            >
+                              {editorForm}
+                            </PopoverContent>
+                          </Popover>
+                          <button
+                            type="button"
+                            onClick={() => removeWhatIf(m.listing)}
+                            aria-label={`Remove the ${m.listing.title} what-if`}
+                            title={`Remove the ${m.listing.title} what-if`}
+                            className="flex h-6 w-6 items-center justify-center rounded-md border border-amber-400/40 bg-background/90 text-muted-foreground shadow-sm backdrop-blur-sm transition-colors hover:border-rose-400/60 hover:text-rose-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/70 dark:hover:text-rose-400"
+                          >
+                            <X className="h-3.5 w-3.5" aria-hidden />
+                          </button>
+                        </div>
                         <div className="p-2.5">
                           <p
                             className="truncate text-[13px] font-semibold leading-tight"

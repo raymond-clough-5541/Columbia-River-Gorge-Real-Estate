@@ -1,0 +1,1143 @@
+     1→     1→"use client";
+     2→     2→
+     3→     3→import { useMemo, useState, type FormEvent } from "react";
+     4→     4→import Image from "next/image";
+     5→     5→import {
+     6→     6→  Check,
+     7→     7→  Crown,
+     8→     8→  Download,
+     9→     9→  FlaskConical,
+    10→    10→  GitCompareArrows,
+    11→    11→  Info,
+    12→    12→  PiggyBank,
+    13→    13→  TrendingUp,
+    14→    14→  X,
+    15→    15→} from "lucide-react";
+    16→    16→import {
+    17→    17→  Sheet,
+    18→    18→  SheetContent,
+    19→    19→  SheetDescription,
+    20→    20→  SheetHeader,
+    21→    21→  SheetTitle,
+    22→    22→} from "@/components/ui/sheet";
+    23→    23→import { Button } from "@/components/ui/button";
+    24→    24→import { Input } from "@/components/ui/input";
+    25→    25→import {
+    26→    26→  Popover,
+    27→    27→  PopoverContent,
+    28→    28→  PopoverTrigger,
+    29→    29→} from "@/components/ui/popover";
+    30→    30→import {
+    31→    31→  Select,
+    32→    32→  SelectContent,
+    33→    33→  SelectItem,
+    34→    34→  SelectTrigger,
+    35→    35→  SelectValue,
+    36→    36→} from "@/components/ui/select";
+    37→    37→import { cn } from "@/lib/utils";
+    38→    38→import { downloadCsv, timestampSuffix, toCsv, type CsvCell } from "@/lib/csv";
+    39→    39→import { useToast } from "@/hooks/use-toast";
+    40→    40→import { useWatchlist } from "@/lib/watchlist-store";
+    41→    41→import {
+    42→    42→  INSURANCE_RATE,
+    43→    43→  PROPERTY_TAX_RATES,
+    44→    44→  RENTAL_RESERVE_RATE,
+    45→    45→  estimateMarketRent,
+    46→    46→  fmtAcres,
+    47→    47→  fmtCurrency,
+    48→    48→  fmtPct,
+    49→    49→  futureValue,
+    50→    50→  monthlyPayment,
+    51→    51→  runwayYears,
+    52→    52→  type ListingSubmarketSummary,
+    53→    53→  type PropertyListing,
+    54→    54→  type PropertyType,
+    55→    55→  type Submarket,
+    56→    56→} from "@/lib/gorge";
+    57→    57→import { StateBadge } from "./shared";
+    58→    58→/* ------------------------------------------------------------------ */
+    59→    59→/* Watchlist comparison sheet — starred listings side-by-side with     */
+    60→    60→/* financing + income-lens metrics, best-in-class highlighting, and    */
+    61→    61→/* an income-vs-appreciation verdict. Round 8-a runs up to THREE       */
+    62→    62→/* hypothetical "what-if" columns (amber) side by side — entry vs      */
+    63→    63→/* premium vs land play — each underwritten by the exact same sheet    */
+    64→    64→/* + winner logic as the live listings.                                */
+    65→    65→/* ------------------------------------------------------------------ */
+    66→    66→
+    67→    67→/** Standard underwriting posture for the sheet (documented in the header). */
+    68→    68→const SHEET_DOWN_PCT = 20;
+    69→    69→const SHEET_RATE = 6.5;
+    70→    70→const SHEET_TERM = 30;
+    71→    71→const LAND_DOWN_PCT = 35;
+    72→    72→const LAND_RATE = 8.5;
+    73→    73→
+    74→    74→/* -------------------- what-ifs (round 7-b → 8-a) -------------------- */
+    75→    75→
+    76→    76→/** Shared id prefix for every hypothetical column ("what-if-1"…"what-if-3").
+    77→    77→ *  Live listing ids are Prisma uuids, so a prefix test can't false-positive.
+    78→    78→ *  `isWhatIf` is the single source of truth for verdict/CSV tagging. */
+    79→    79→const WHAT_IF_ID = "what-if";
+    80→    80→/** Hard cap — three hypotheticals (entry / premium / land play) is where
+    81→    81→ *  the sheet stays readable; past that columns stop comparing and start
+    82→    82→ *  wallpapering. Matches the matrix's 3-pin convention. */
+    83→    83→const WHAT_IF_MAX = 3;
+    84→    84→const whatIfId = (slot: number) => `${WHAT_IF_ID}-${slot}`;
+    85→    85→const isWhatIf = (id: string) => id.startsWith(`${WHAT_IF_ID}-`);
+    86→    86→
+    87→    87→/** Smallest unused slot 1..WHAT_IF_MAX, so ids stay canonical AND unique
+    88→    88→ *  across add → remove → add churn (["-1", "-3"] refills "-2", never a
+    89→    89→ *  dupe). Unreachable overflow slot keeps the helper total. */
+    90→    90→const nextWhatIfSlot = (existing: PropertyListing[]): number => {
+    91→    91→  const used = new Set(existing.map((w) => w.id));
+    92→    92→  for (let slot = 1; slot <= WHAT_IF_MAX; slot += 1) {
+    93→    93→    if (!used.has(whatIfId(slot))) return slot;
+    94→    94→  }
+    95→    95→  return WHAT_IF_MAX + 1;
+    96→    96→};
+    97→    97→
+    98→    98→const WHAT_IF_MIN_PRICE = 50_000;
+    99→    99→const WHAT_IF_PRICE_STEP = 5_000;
+   100→   100→const WHAT_IF_MAX_SQFT = 15_000;
+   101→   101→const WHAT_IF_MAX_ACREAGE = 500;
+   102→   102→const WHAT_IF_DEFAULT_SQFT = 2200;
+   103→   103→const WHAT_IF_DEFAULT_ACREAGE = 0.3;
+   104→   104→const WHAT_IF_TYPES: PropertyType[] = [
+   105→   105→  "Single-Family",
+   106→   106→  "Infill Multi-Family",
+   107→   107→  "Luxury Agricultural/Farm Estate",
+   108→   108→  "Land Parcel",
+   109→   109→];
+   110→   110→
+   111→   111→/** Auto label used when the editor's label field is left blank.
+   112→   112→ *  Kept compact (compact-currency) so the column header never truncates. */
+   113→   113→const autoWhatIfLabel = (price: number) =>
+   114→   114→  `What-if ${fmtCurrency(price, { compact: true })}`;
+   115→   115→
+   116→   116→/** Round 8-a: two what-ifs at the same price point would auto-label
+   117→   117→ *  identically and become indistinguishable amber columns — append
+   118→   118→ *  " · 2"/" · 3" until the title is free. Custom labels may collide;
+   119→   119→ *  that's the user's call, no enforcement. */
+   120→   120→const uniqueAutoWhatIfLabel = (
+   121→   121→  price: number,
+   122→   122→  existing: PropertyListing[]
+   123→   123→): string => {
+   124→   124→  const base = autoWhatIfLabel(price);
+   125→   125→  if (!existing.some((w) => w.title === base)) return base;
+   126→   126→  for (let n = 2; n <= WHAT_IF_MAX; n += 1) {
+   127→   127→    const candidate = `${base} · ${n}`;
+   128→   128→    if (!existing.some((w) => w.title === candidate)) return candidate;
+   129→   129→  }
+   130→   130→  return base; // unreachable at ≤3 entries — keeps the helper total
+   131→   131→};
+   132→   132→
+   133→   133→const clampWhatIfNumber = (raw: string, min: number, max: number): number => {
+   134→   134→  const n = Number(raw);
+   135→   135→  return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : min;
+   136→   136→};
+   137→   137→
+   138→   138→interface WhatIfForm {
+   139→   139→  price: string;
+   140→   140→  type: PropertyType;
+   141→   141→  /** Submarket slug. */
+   142→   142→  market: string;
+   143→   143→  sqft: string;
+   144→   144→  acreage: string;
+   145→   145→  label: string;
+   146→   146→}
+   147→   147→
+   148→   148→interface CompareMetrics {
+   149→   149→  listing: PropertyListing;
+   150→   150→  isLand: boolean;
+   151→   151→  loan: number;
+   152→   152→  monthlyCarry: number;
+   153→   153→  rentMonthly: number;
+   154→   154→  grossYield: number;
+   155→   155→  noiYield: number;
+   156→   156→  cashFlow: number;
+   157→   157→  cashOnCash: number;
+   158→   158→  fv2046: number;
+   159→   159→  multiple: number;
+   160→   160→  pricePerSqft: number | null;
+   161→   161→  runway: number;
+   162→   162→}
+   163→   163→
+   164→   164→function underwrite(l: PropertyListing): CompareMetrics {
+   165→   165→  const isLand = l.propertyType === "Land Parcel" || l.squareFeet === 0;
+   166→   166→  const price = Math.max(1, l.price);
+   167→   167→  const downPct = isLand ? LAND_DOWN_PCT : SHEET_DOWN_PCT;
+   168→   168→  const rate = isLand ? LAND_RATE : SHEET_RATE;
+   169→   169→  const down = (price * downPct) / 100;
+   170→   170→  const loan = price - down;
+   171→   171→  const state = l.submarket?.state ?? "OR";
+   172→   172→  const pi = monthlyPayment(loan, rate, SHEET_TERM);
+   173→   173→  const tax = (price * PROPERTY_TAX_RATES[state]) / 100 / 12;
+   174→   174→  const ins = isLand ? 0 : (price * INSURANCE_RATE) / 12;
+   175→   175→  const monthlyCarry = pi + tax + ins;
+   176→   176→
+   177→   177→  const rent = estimateMarketRent(l); // market-indexed per round 6
+   178→   178→  const grossAnnual = (rent.dwelling + rent.agriculture) * 12;
+   179→   179→  const noi = grossAnnual * (1 - RENTAL_RESERVE_RATE);
+   180→   180→  const cagr = l.submarket?.projectedCagr ?? 5;
+   181→   181→  const fv2046 = futureValue(price, cagr, 20);
+   182→   182→
+   183→   183→  return {
+   184→   184→    listing: l,
+   185→   185→    isLand,
+   186→   186→    loan,
+   187→   187→    monthlyCarry,
+   188→   188→    rentMonthly: rent.dwelling + rent.agriculture,
+   189→   189→    grossYield: isLand ? 0 : (grossAnnual / price) * 100,
+   190→   190→    noiYield: isLand ? 0 : (noi / price) * 100,
+   191→   191→    cashFlow: noi - monthlyCarry * 12,
+   192→   192→    cashOnCash: down > 0 ? (noi - monthlyCarry * 12) / down : 0,
+   193→   193→    fv2046,
+   194→   194→    multiple: Math.pow(1 + cagr / 100, 20),
+   195→   195→    pricePerSqft: !isLand && l.squareFeet > 0 ? price / l.squareFeet : null,
+   196→   196→    runway: runwayYears(l.submarket?.depletionYear ?? 2046),
+   197→   197→  };
+   198→   198→}
+   199→   199→
+   200→   200→type RowDef = {
+   201→   201→  key: string;
+   202→   202→  label: string;
+   203→   203→  hint: string;
+   204→   204→  /** Which direction wins. null → informational row, no highlight. */
+   205→   205→  better: "high" | "low" | null;
+   206→   206→  format: (m: CompareMetrics) => string;
+   207→   207→  na?: (m: CompareMetrics) => boolean;
+   208→   208→  /** Rose tint when the raw value is negative (cash-flow family). */
+   209→   209→  negativeRose?: (m: CompareMetrics) => boolean;
+   210→   210→};
+   211→   211→
+   212→   212→const ROWS: RowDef[] = [
+   213→   213→  {
+   214→   214→    key: "price",
+   215→   215→    label: "Asking price",
+   216→   216→    hint: "Entry check",
+   217→   217→    better: "low",
+   218→   218→    format: (m) => fmtCurrency(m.listing.price),
+   219→   219→  },
+   220→   220→  {
+   221→   221→    key: "sqft",
+   222→   222→    label: "$ / sqft",
+   223→   223→    hint: "Improved value",
+   224→   224→    better: "low",
+   225→   225→    format: (m) =>
+   226→   226→      m.pricePerSqft ? `$${Math.round(m.pricePerSqft).toLocaleString()}` : "—",
+   227→   227→    na: (m) => m.isLand,
+   228→   228→  },
+   229→   229→  {
+   230→   230→    key: "acreage",
+   231→   231→    label: "Deed acres",
+   232→   232→    hint: "Land component",
+   233→   233→    better: null,
+   234→   234→    format: (m) => fmtAcres(m.listing.acreage, m.listing.acreage < 1 ? 2 : 1),
+   235→   235→  },
+   236→   236→  {
+   237→   237→    key: "rent",
+   238→   238→    label: "Est. rent / mo",
+   239→   239→    hint: "Market-indexed",
+   240→   240→    better: "high",
+   241→   241→    format: (m) =>
+   242→   242→      m.isLand ? "—" : fmtCurrency(Math.round(m.rentMonthly)),
+   243→   243→    na: (m) => m.isLand,
+   244→   244→  },
+   245→   245→  {
+   246→   246→    key: "gross",
+   247→   247→    label: "Gross yield",
+   248→   248→    hint: "Rent ÷ price",
+   249→   249→    better: "high",
+   250→   250→    format: (m) => (m.isLand ? "—" : fmtPct(m.grossYield)),
+   251→   251→    na: (m) => m.isLand,
+   252→   252→  },
+   253→   253→  {
+   254→   254→    key: "noi",
+   255→   255→    label: "NOI yield",
+   256→   256→    hint: `after ${fmtPct(RENTAL_RESERVE_RATE * 100, 0)} reserve`,
+   257→   257→    better: "high",
+   258→   258→    format: (m) => (m.isLand ? "—" : fmtPct(m.noiYield)),
+   259→   259→    na: (m) => m.isLand,
+   260→   260→  },
+   261→   261→  {
+   262→   262→    key: "carry",
+   263→   263→    label: "Monthly carry",
+   264→   264→    hint: `${SHEET_DOWN_PCT}%↓ · ${SHEET_RATE}% · ${SHEET_TERM}yr`,
+   265→   265→    better: "low",
+   266→   266→    format: (m) => fmtCurrency(Math.round(m.monthlyCarry)),
+   267→   267→  },
+   268→   268→  {
+   269→   269→    key: "cashflow",
+   270→   270→    label: "Annual cash flow",
+   271→   271→    hint: "NOI − carry",
+   272→   272→    better: "high",
+   273→   273→    format: (m) => (m.isLand ? "—" : fmtCurrency(Math.round(m.cashFlow), { compact: true })),
+   274→   274→    na: (m) => m.isLand,
+   275→   275→    negativeRose: (m) => !m.isLand && m.cashFlow < 0,
+   276→   276→  },
+   277→   277→  {
+   278→   278→    key: "coc",
+   279→   279→    label: "Cash-on-cash",
+   280→   280→    hint: "On the down stroke",
+   281→   281→    better: "high",
+   282→   282→    format: (m) => (m.isLand ? "—" : fmtPct(m.cashOnCash * 100)),
+   283→   283→    na: (m) => m.isLand,
+   284→   284→    negativeRose: (m) => !m.isLand && m.cashOnCash < 0,
+   285→   285→  },
+   286→   286→  {
+   287→   287→    key: "fv",
+   288→   288→    label: "2046 value",
+   289→   289→    hint: "At market CAGR",
+   290→   290→    better: "high",
+   291→   291→    format: (m) => fmtCurrency(Math.round(m.fv2046), { compact: true }),
+   292→   292→  },
+   293→   293→  {
+   294→   294→    key: "mult",
+   295→   295→    label: "20-yr multiple",
+   296→   296→    hint: "Appreciation engine",
+   297→   297→    better: "high",
+   298→   298→    format: (m) => `${m.multiple.toFixed(2)}×`,
+   299→   299→  },
+   300→   300→  {
+   301→   301→    key: "runway",
+   302→   302→    label: "Land runway",
+   303→   303→    hint: "Market's raw-land years",
+   304→   304→    better: "high",
+   305→   305→    format: (m) => `${m.runway} yrs`,
+   306→   306→  },
+   307→   307→];
+   308→   308→
+   309→   309→/** Pick the winning metric entry for a row (null when informational). */
+   310→   310→function winnerOf(
+   311→   311→  row: RowDef,
+   312→   312→  entries: CompareMetrics[]
+   313→   313→): CompareMetrics | null {
+   314→   314→  if (!row.better || entries.length < 2) return null;
+   315→   315→  const scored = entries.filter((m) => !row.na?.(m));
+   316→   316→  if (scored.length < 2) return null;
+   317→   317→  const val = (m: CompareMetrics) => {
+   318→   318→    switch (row.key) {
+   319→   319→      case "price": return m.listing.price;
+   320→   320→      case "sqft": return m.pricePerSqft ?? Infinity;
+   321→   321→      case "carry": return m.monthlyCarry;
+   322→   322→      case "rent": return m.rentMonthly;
+   323→   323→      case "gross": return m.grossYield;
+   324→   324→      case "noi": return m.noiYield;
+   325→   325→      case "cashflow": return m.cashFlow;
+   326→   326→      case "coc": return m.cashOnCash;
+   327→   327→      case "fv": return m.fv2046;
+   328→   328→      case "mult": return m.multiple;
+   329→   329→      case "runway": return m.runway;
+   330→   330→      default: return 0;
+   331→   331→    }
+   332→   332→  };
+   333→   333→  const sorted = [...scored].sort((a, b) =>
+   334→   334→    row.better === "high" ? val(b) - val(a) : val(a) - val(b)
+   335→   335→  );
+   336→   336→  const best = sorted[0];
+   337→   337→  // Ties → both win (highlight stays honest).
+   338→   338→  return val(best) === val(sorted[1]) ? null : best;
+   339→   339→}
+   340→   340→
+   341→   341→export function CompareSheet({
+   342→   342→  listings,
+   343→   343→  open,
+   344→   344→  onOpenChange,
+   345→   345→  onOpenListing,
+   346→   346→  submarkets,
+   347→   347→}: {
+   348→   348→  listings: PropertyListing[];
+   349→   349→  open: boolean;
+   350→   350→  onOpenChange: (open: boolean) => void;
+   351→   351→  onOpenListing?: (listing: PropertyListing) => void;
+   352→   352→  /** Real micro-markets the what-if editor can underwrite in. */
+   353→   353→  submarkets?: Submarket[];
+   354→   354→}) {
+   355→   355→  const watchlist = useWatchlist();
+   356→   356→  const { toast } = useToast();
+   357→   357→
+   358→   358→  // Star order = the user's shortlist order.
+   359→   359→  const starred = useMemo(
+   360→   360→    () =>
+   361→   361→      watchlist
+   362→   362→        .map((id) => listings.find((l) => l.id === id))
+   363→   363→        .filter((l): l is PropertyListing => Boolean(l)),
+   364→   364→    [watchlist, listings]
+   365→   365→  );
+   366→   366→  /* ---- Hypothetical what-if columns (round 8-a) ----
+   367→   367→     Up to WHAT_IF_MAX synthetic listings underwrite side by side, in
+   368→   368→     creation order. The array lives here — the sheet stays mounted across
+   369→   369→     open/close via CompareTrigger — so the hypotheticals survive closing
+   370→   370→     and reopening the sheet for the whole session. */
+   371→   371→  const [whatIfs, setWhatIfs] = useState<PropertyListing[]>([]);
+   372→   372→  const [editorOpen, setEditorOpen] = useState(false);
+   373→   373→  const [form, setForm] = useState<WhatIfForm>({
+   374→   374→    price: "",
+   375→   375→    type: "Single-Family",
+   376→   376→    market: "",
+   377→   377→    sqft: String(WHAT_IF_DEFAULT_SQFT),
+   378→   378→    acreage: String(WHAT_IF_DEFAULT_ACREAGE),
+   379→   379→    label: "",
+   380→   380→  });
+   381→   381→
+   382→   382→  const sortedSubmarkets = useMemo(
+   383→   383→    () => [...(submarkets ?? [])].sort((a, b) => a.name.localeCompare(b.name)),
+   384→   384→    [submarkets]
+   385→   385→  );
+   386→   386→
+   387→   387→  const entries = useMemo(
+   388→   388→    () => [...starred.map(underwrite), ...whatIfs.map(underwrite)],
+   389→   389→    [starred, whatIfs]
+   390→   390→  );
+   391→   391→
+   392→   392→  const bestIncome = useMemo(() => {
+   393→   393→    const improved = entries.filter((m) => !m.isLand);
+   394→   394→    if (improved.length === 0) return null;
+   395→   395→    return improved.reduce((a, b) => (b.cashFlow > a.cashFlow ? b : a));
+   396→   396→  }, [entries]);
+   397→   397→  const bestEquity = useMemo(() => {
+   398→   398→    if (entries.length === 0) return null;
+   399→   399→    return entries.reduce((a, b) => (b.fv2046 > a.fv2046 ? b : a));
+   400→   400→  }, [entries]);
+   401→   401→
+   402→   402→  /* ---- What-if editor plumbing (all toasts fire in event handlers,
+   403→   403→     never inside state updaters — the round-6 bug class). The editor is
+   404→   404→     ADD-only as of round 8-a: every open resets to starred-derived
+   405→   405→     defaults, and the 3-entry limit is gated here so a 4th column can
+   406→   406→     never even open the form. ---- */
+   407→   407→
+   408→   408→  const canWhatIf = starred.length >= 2 && sortedSubmarkets.length > 0;
+   409→   409→
+   410→   410→  /** Median starred asking price, rounded to the nearest $5k. */
+   411→   411→  const defaultWhatIfPrice = useMemo(() => {
+   412→   412→    const prices = starred.map((l) => l.price).sort((a, b) => a - b);
+   413→   413→    if (prices.length === 0) return 450_000;
+   414→   414→    const mid = Math.floor(prices.length / 2);
+   415→   415→    const median =
+   416→   416→      prices.length % 2 === 1
+   417→   417→        ? prices[mid]
+   418→   418→        : (prices[mid - 1] + prices[mid]) / 2;
+   419→   419→    return Math.round(median / WHAT_IF_PRICE_STEP) * WHAT_IF_PRICE_STEP;
+   420→   420→  }, [starred]);
+   421→   421→
+   422→   422→  const handleEditorOpenChange = (next: boolean) => {
+   423→   423→    if (next) {
+   424→   424→      // Limit gate at open time (event-handler context, never an updater) —
+   425→   425→      // the toast fires once per click and the popover simply stays closed.
+   426→   426→      if (whatIfs.length >= WHAT_IF_MAX) {
+   427→   427→        toast({
+   428→   428→          title: "What-if limit reached",
+   429→   429→          description:
+   430→   430→            "Three hypotheticals at a time — remove one to add another.",
+   431→   431→        });
+   432→   432→        return;
+   433→   433→      }
+   434→   434→      const firstStarredSlug = starred[0]?.submarket?.slug ?? "";
+   435→   435→      const defaultSlug = sortedSubmarkets.some(
+   436→   436→        (s) => s.slug === firstStarredSlug
+   437→   437→      )
+   438→   438→        ? firstStarredSlug
+   439→   439→        : (sortedSubmarkets[0]?.slug ?? "");
+   440→   440→      setForm({
+   441→   441→        price: String(defaultWhatIfPrice),
+   442→   442→        type: "Single-Family",
+   443→   443→        market: defaultSlug,
+   444→   444→        sqft: String(WHAT_IF_DEFAULT_SQFT),
+   445→   445→        acreage: String(WHAT_IF_DEFAULT_ACREAGE),
+   446→   446→        label: "",
+   447→   447→      });
+   448→   448→    }
+   449→   449→    setEditorOpen(next);
+   450→   450→  };
+   451→   451→
+   452→   452→  const submitWhatIf = (e: FormEvent<HTMLFormElement>) => {
+   453→   453→    e.preventDefault();
+   454→   454→    // Defensive double-gate: the popover can't open at the limit, but a
+   455→   455→    // stray Enter (or a future programmatic submit) must not grow a 4th column.
+   456→   456→    if (whatIfs.length >= WHAT_IF_MAX) {
+   457→   457→      toast({
+   458→   458→        title: "What-if limit reached",
+   459→   459→        description:
+   460→   460→          "Three hypotheticals at a time — remove one to add another.",
+   461→   461→      });
+   462→   462→      return;
+   463→   463→    }
+   464→   464→    const parsed = Number(form.price);
+   465→   465→    if (!Number.isFinite(parsed) || parsed < WHAT_IF_MIN_PRICE) {
+   466→   466→      toast({
+   467→   467→        title: "Enter a target price first",
+   468→   468→        description: `The hypothetical needs a target price of at least ${fmtCurrency(
+   469→   469→          WHAT_IF_MIN_PRICE
+   470→   470→        )} — in ${fmtCurrency(WHAT_IF_PRICE_STEP)} steps — to underwrite.`,
+   471→   471→      });
+   472→   472→      return;
+   473→   473→    }
+   474→   474→    const market = sortedSubmarkets.find((s) => s.slug === form.market);
+   475→   475→    if (!market) {
+   476→   476→      toast({
+   477→   477→        title: "Pick a market first",
+   478→   478→        description:
+   479→   479→          "Choose the micro-market the hypothetical would trade in.",
+   480→   480→      });
+   481→   481→      return;
+   482→   482→    }
+   483→   483→    const price = Math.round(parsed / WHAT_IF_PRICE_STEP) * WHAT_IF_PRICE_STEP;
+   484→   484→    const sqft = clampWhatIfNumber(form.sqft, 0, WHAT_IF_MAX_SQFT);
+   485→   485→    const acreage = clampWhatIfNumber(form.acreage, 0, WHAT_IF_MAX_ACREAGE);
+   486→   486→    const label = form.label.trim() || uniqueAutoWhatIfLabel(price, whatIfs);
+   487→   487→    const submarket: ListingSubmarketSummary = {
+   488→   488→      slug: market.slug,
+   489→   489→      name: market.name,
+   490→   490→      state: market.state,
+   491→   491→      county: market.county,
+   492→   492→      regulatoryFramework: market.regulatoryFramework,
+   493→   493→      projectedCagr: market.projectedCagr,
+   494→   494→      depletionYear: market.depletionYear,
+   495→   495→      baselinePrice2026: market.baselinePrice2026,
+   496→   496→    };
+   497→   497→    const isLand = form.type === "Land Parcel" || sqft === 0;
+   498→   498→    const id = whatIfId(nextWhatIfSlot(whatIfs));
+   499→   499→    setWhatIfs((prev) => [
+   500→   500→      ...prev,
+   501→   501→      {
+   502→   502→        id,
+   503→   503→        submarketId: id,
+   504→   504→        title: label,
+   505→   505→        propertyType: form.type,
+   506→   506→        price,
+   507→   507→        acreage,
+   508→   508→        bedrooms: isLand ? 0 : 3,
+   509→   509→        bathrooms: isLand ? 0 : 2,
+   510→   510→        squareFeet: sqft,
+   511→   511→        zoningCode: "—",
+   512→   512→        description: "",
+   513→   513→        imageUrl: "",
+   514→   514→        featured: false,
+   515→   515→        status: "Hypothesis",
+   516→   516→        createdAt: new Date().toISOString(),
+   517→   517→        submarket,
+   518→   518→      },
+   519→   519→    ]);
+   520→   520→    setEditorOpen(false);
+   521→   521→    toast({
+   522→   522→      title: "What-if added to sheet",
+   523→   523→      description: `${label} · ${market.name} (${market.state}) — ${
+   524→   524→        whatIfs.length + 1
+   525→   525→      } of ${WHAT_IF_MAX} hypotheticals, underwritten with the same sheet as the ${starred.length} starred listings.`,
+   526→   526→    });
+   527→   527→  };
+   528→   528→
+   529→   529→  const removeWhatIf = (whatIf: PropertyListing) => {
+   530→   530→    setWhatIfs((prev) => prev.filter((w) => w.id !== whatIf.id));
+   531→   531→    const remaining = whatIfs.length - 1;
+   532→   532→    toast({
+   533→   533→      title: "What-if removed",
+   534→   534→      description: `${whatIf.title} was dropped — ${
+   535→   535→        remaining === 0
+   536→   536→          ? "only live listings remain."
+   537→   537→          : `${remaining} hypothetical${remaining === 1 ? "" : "s"} still on the sheet.`
+   538→   538→      }`,
+   539→   539→    });
+   540→   540→  };
+   541→   541→
+   542→   542→  /** Verdict pick title, tagged when ANY hypothetical wins a pick. */
+   543→   543→  const pickTitle = (m: CompareMetrics): string =>
+   544→   544→    isWhatIf(m.listing.id)
+   545→   545→      ? `${m.listing.title} (what-if)`
+   546→   546→      : m.listing.title;
+   547→   547→
+   548→   548→  /** Live preview backing the label field's placeholder. */
+   549→   549→  const formPrice = Number(form.price);
+   550→   550→  const previewWhatIfPrice =
+   551→   551→    Number.isFinite(formPrice) && formPrice >= WHAT_IF_MIN_PRICE
+   552→   552→      ? Math.round(formPrice / WHAT_IF_PRICE_STEP) * WHAT_IF_PRICE_STEP
+   553→   553→      : defaultWhatIfPrice;
+   554→   554→
+   555→   555→  const exportCsv = () => {
+   556→   556→    if (entries.length === 0) return;
+   557→   557→    const headers: string[] = [
+   558→   558→      "Metric",
+   559→   559→      ...entries.map((m) =>
+   560→   560→        isWhatIf(m.listing.id)
+   561→   561→          ? `${m.listing.title} (what-if)`
+   562→   562→          : m.listing.title
+   563→   563→      ),
+   564→   564→    ];
+   565→   565→    const rows: CsvCell[][] = ROWS.map((r) => [
+   566→   566→      `${r.label} (${r.hint})`,
+   567→   567→      ...entries.map((m) => (r.na?.(m) ? "n/a" : r.format(m))),
+   568→   568→    ]);
+   569→   569→    downloadCsv(
+   570→   570→      `watchlist-comparison-${timestampSuffix()}`,
+   571→   571→      toCsv(headers, rows)
+   572→   572→    );
+   573→   573→    toast({
+   574→   574→      title: "Comparison exported",
+   575→   575→      description: `${entries.length} underwritten column${entries.length === 1 ? "" : "s"} → CSV.`,
+   576→   576→    });
+   577→   577→  };
+   578→   578→
+   579→   579→  return (
+   580→   580→    <Sheet open={open} onOpenChange={onOpenChange}>
+   581→   581→      <SheetContent
+   582→   582→        side="right"
+   583→   583→        className="flex w-full flex-col gap-0 overflow-y-auto p-0 sm:max-w-[760px]"
+   584→   584→      >
+   585→   585→        <SheetHeader className="border-b bg-muted/30 px-5 py-4 text-left">
+   586→   586→          <SheetTitle className="flex items-center gap-2 text-[16px]">
+   587→   587→            <GitCompareArrows className="h-4 w-4 text-emerald-600 dark:text-emerald-400" aria-hidden />
+   588→   588→            Watchlist comparison
+   589→   589→          </SheetTitle>
+   590→   590→          <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-2">
+   591→   591→            <SheetDescription className="min-w-[180px] flex-1 text-[12.5px] leading-relaxed">
+   592→   592→              {starred.length >= 2 ? (
+   593→   593→                <>
+   594→   594→                  {starred.length} starred listings underwritten on a standard
+   595→   595→                  sheet — {SHEET_DOWN_PCT}% down @ {SHEET_RATE}% over {SHEET_TERM}
+   596→   596→                  yrs (land: {LAND_DOWN_PCT}% @ {LAND_RATE}%), base rent posture,
+   597→   597→                  8% operating reserve. Emerald = best in class.
+   598→   598→                  {whatIfs.length > 0 ? (
+   599→   599→                    /* Subtle amber clause — inline span so the description
+   600→   600→                       reflows without layout-shift risk. */
+   601→   601→                    <span className="text-amber-600 dark:text-amber-300">
+   602→   602→                      {" "}
+   603→   603→                      · +{whatIfs.length} what-if
+   604→   604→                      {whatIfs.length === 1 ? "" : "s"}
+   605→   605→                    </span>
+   606→   606→                  ) : null}
+   607→   607→                </>
+   608→   608→              ) : (
+   609→   609→                "Star at least two listings to compare them side-by-side."
+   610→   610→              )}
+   611→   611→            </SheetDescription>
+   612→   612→            {canWhatIf ? (
+   613→   613→              <Popover open={editorOpen} onOpenChange={handleEditorOpenChange}>
+   614→   614→                <PopoverTrigger asChild>
+   615→   615→                  <button
+   616→   616→                    type="button"
+   617→   617→                    title={
+   618→   618→                      whatIfs.length >= WHAT_IF_MAX
+   619→   619→                        ? "Three hypotheticals are already on the sheet — remove one to add another"
+   620→   620→                        : "Underwrite a hypothetical listing at a target price point — up to three side by side"
+   621→   621→                    }
+   622→   622→                    className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-dashed border-amber-400/60 bg-amber-400/[0.04] px-2.5 text-[12px] font-medium text-amber-700 transition-all hover:border-amber-400 hover:bg-amber-400/10 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/70 dark:text-amber-300 dark:hover:bg-amber-400/10"
+   623→   623→                  >
+   624→   624→                    <FlaskConical className="h-3.5 w-3.5" aria-hidden />
+   625→   625→                    Add what-if
+   626→   626→                    {whatIfs.length > 0 ? (
+   627→   627→                      <span className="rounded-sm bg-amber-400/15 px-1 text-[10.5px] font-bold tabular-nums">
+   628→   628→                        {whatIfs.length}/{WHAT_IF_MAX}
+   629→   629→                      </span>
+   630→   630→                    ) : null}
+   631→   631→                  </button>
+   632→   632→                </PopoverTrigger>
+   633→   633→                <PopoverContent
+   634→   634→                  align="end"
+   635→   635→                  aria-label="Hypothetical what-if listing editor"
+   636→   636→                  className="w-[320px] max-w-[calc(100vw-1.5rem)] p-3.5"
+   637→   637→                >
+   638→   638→                  <form
+   639→   639→                    onSubmit={submitWhatIf}
+   640→   640→                    className="grid grid-cols-2 gap-2.5"
+   641→   641→                  >
+   642→   642→                    <div className="col-span-2 flex items-center gap-1.5">
+   643→   643→                      <FlaskConical
+   644→   644→                        className="h-3.5 w-3.5 shrink-0 text-amber-500"
+   645→   645→                        aria-hidden
+   646→   646→                      />
+   647→   647→                      <p className="text-[12.5px] font-semibold">
+   648→   648→                        Hypothetical listing
+   649→   649→                      </p>
+   650→   650→                    </div>
+   651→   651→                    <div className="col-span-2">
+   652→   652→                      <label
+   653→   653→                        htmlFor="what-if-price"
+   654→   654→                        className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground"
+   655→   655→                      >
+   656→   656→                        Target price
+   657→   657→                      </label>
+   658→   658→                      <Input
+   659→   659→                        id="what-if-price"
+   660→   660→                        type="number"
+   661→   661→                        inputMode="numeric"
+   662→   662→                        min={WHAT_IF_MIN_PRICE}
+   663→   663→                        step={WHAT_IF_PRICE_STEP}
+   664→   664→                        value={form.price}
+   665→   665→                        onChange={(e) =>
+   666→   666→                          setForm((f) => ({ ...f, price: e.target.value }))
+   667→   667→                        }
+   668→   668→                        className="mt-1 h-8 text-[13px] tabular-nums"
+   669→   669→                      />
+   670→   670→                    </div>
+   671→   671→                    <div className="col-span-2">
+   672→   672→                      <label
+   673→   673→                        htmlFor="what-if-type"
+   674→   674→                        className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground"
+   675→   675→                      >
+   676→   676→                        Product type
+   677→   677→                      </label>
+   678→   678→                      <Select
+   679→   679→                        value={form.type}
+   680→   680→                        onValueChange={(v) =>
+   681→   681→                          setForm((f) => ({ ...f, type: v as PropertyType }))
+   682→   682→                        }
+   683→   683→                      >
+   684→   684→                        <SelectTrigger
+   685→   685→                          id="what-if-type"
+   686→   686→                          className="mt-1 h-8 w-full text-[13px]"
+   687→   687→                          aria-label="Hypothetical product type"
+   688→   688→                        >
+   689→   689→                          <SelectValue />
+   690→   690→                        </SelectTrigger>
+   691→   691→                        <SelectContent>
+   692→   692→                          {WHAT_IF_TYPES.map((t) => (
+   693→   693→                            <SelectItem key={t} value={t} className="text-[13px]">
+   694→   694→                              {t}
+   695→   695→                            </SelectItem>
+   696→   696→                          ))}
+   697→   697→                        </SelectContent>
+   698→   698→                      </Select>
+   699→   699→                    </div>
+   700→   700→                    <div className="col-span-2">
+   701→   701→                      <label
+   702→   702→                        htmlFor="what-if-market"
+   703→   703→                        className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground"
+   704→   704→                      >
+   705→   705→                        Market
+   706→   706→                      </label>
+   707→   707→                      <Select
+   708→   708→                        value={form.market}
+   709→   709→                        onValueChange={(v) =>
+   710→   710→                          setForm((f) => ({ ...f, market: v }))
+   711→   711→                        }
+   712→   712→                      >
+   713→   713→                        <SelectTrigger
+   714→   714→                          id="what-if-market"
+   715→   715→                          className="mt-1 h-8 w-full text-[13px]"
+   716→   716→                          aria-label="Hypothetical market"
+   717→   717→                        >
+   718→   718→                          <SelectValue placeholder="Pick a micro-market" />
+   719→   719→                        </SelectTrigger>
+   720→   720→                        <SelectContent>
+   721→   721→                          {sortedSubmarkets.map((s) => (
+   722→   722→                            <SelectItem
+   723→   723→                              key={s.slug}
+   724→   724→                              value={s.slug}
+   725→   725→                              className="text-[13px]"
+   726→   726→                            >
+   727→   727→                              {s.name} ({s.state})
+   728→   728→                            </SelectItem>
+   729→   729→                          ))}
+   730→   730→                        </SelectContent>
+   731→   731→                      </Select>
+   732→   732→                    </div>
+   733→   733→                    <div>
+   734→   734→                      <label
+   735→   735→                        htmlFor="what-if-sqft"
+   736→   736→                        className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground"
+   737→   737→                      >
+   738→   738→                        Square feet
+   739→   739→                      </label>
+   740→   740→                      <Input
+   741→   741→                        id="what-if-sqft"
+   742→   742→                        type="number"
+   743→   743→                        inputMode="numeric"
+   744→   744→                        min={0}
+   745→   745→                        max={WHAT_IF_MAX_SQFT}
+   746→   746→                        step={100}
+   747→   747→                        value={form.sqft}
+   748→   748→                        onChange={(e) =>
+   749→   749→                          setForm((f) => ({ ...f, sqft: e.target.value }))
+   750→   750→                        }
+   751→   751→                        className="mt-1 h-8 text-[13px] tabular-nums"
+   752→   752→                      />
+   753→   753→                    </div>
+   754→   754→                    <div>
+   755→   755→                      <label
+   756→   756→                        htmlFor="what-if-acreage"
+   757→   757→                        className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground"
+   758→   758→                      >
+   759→   759→                        Acreage
+   760→   760→                      </label>
+   761→   761→                      <Input
+   762→   762→                        id="what-if-acreage"
+   763→   763→                        type="number"
+   764→   764→                        inputMode="decimal"
+   765→   765→                        min={0}
+   766→   766→                        max={WHAT_IF_MAX_ACREAGE}
+   767→   767→                        step={0.1}
+   768→   768→                        value={form.acreage}
+   769→   769→                        onChange={(e) =>
+   770→   770→                          setForm((f) => ({ ...f, acreage: e.target.value }))
+   771→   771→                        }
+   772→   772→                        className="mt-1 h-8 text-[13px] tabular-nums"
+   773→   773→                      />
+   774→   774→                    </div>
+   775→   775→                    {form.type === "Land Parcel" || Number(form.sqft) === 0 ? (
+   776→   776→                      <p className="col-span-2 text-[11px] leading-snug text-muted-foreground">
+   777→   777→                        Land posture applies — {LAND_DOWN_PCT}% down @ {LAND_RATE}%,
+   778→   778→                        no rent until entitlement.
+   779→   779→                      </p>
+   780→   780→                    ) : null}
+   781→   781→                    <div className="col-span-2">
+   782→   782→                      <label
+   783→   783→                        htmlFor="what-if-label"
+   784→   784→                        className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground"
+   785→   785→                      >
+   786→   786→                        Label · optional
+   787→   787→                      </label>
+   788→   788→                      <Input
+   789→   789→                        id="what-if-label"
+   790→   790→                        type="text"
+   791→   791→                        value={form.label}
+   792→   792→                        onChange={(e) =>
+   793→   793→                          setForm((f) => ({ ...f, label: e.target.value }))
+   794→   794→                        }
+   795→   795→                        className="mt-1 h-8 text-[13px]"
+   796→   796→                        placeholder={uniqueAutoWhatIfLabel(
+   797→   797→                          previewWhatIfPrice,
+   798→   798→                          whatIfs
+   799→   799→                        )}
+   800→   800→                      />
+   801→   801→                    </div>
+   802→   802→                    <div className="col-span-2 mt-0.5 flex items-center justify-end gap-2">
+   803→   803→                      <Button
+   804→   804→                        type="button"
+   805→   805→                        variant="ghost"
+   806→   806→                        className="h-8 text-[12.5px]"
+   807→   807→                        onClick={() => setEditorOpen(false)}
+   808→   808→                      >
+   809→   809→                        Cancel
+   810→   810→                      </Button>
+   811→   811→                      <Button
+   812→   812→                        type="submit"
+   813→   813→                        className="h-8 gap-1.5 bg-zinc-900 text-[12.5px] text-white hover:bg-zinc-800 dark:bg-emerald-500 dark:text-zinc-950 dark:hover:bg-emerald-400"
+   814→   814→                      >
+   815→   815→                        <FlaskConical className="h-3.5 w-3.5" aria-hidden />
+   816→   816→                        Add to sheet
+   817→   817→                      </Button>
+   818→   818→                    </div>
+   819→   819→                  </form>
+   820→   820→                </PopoverContent>
+   821→   821→              </Popover>
+   822→   822→            ) : null}
+   823→   823→          </div>
+   824→   824→        </SheetHeader>
+   825→   825→
+   826→   826→        {starred.length < 2 ? (
+   827→   827→          <div className="flex flex-1 flex-col items-center justify-center gap-3 p-10 text-center">
+   828→   828→            <div className="flex h-12 w-12 items-center justify-center rounded-full border bg-muted/60">
+   829→   829→              <GitCompareArrows className="h-5 w-5 text-muted-foreground" aria-hidden />
+   830→   830→            </div>
+   831→   831→            <p className="text-sm font-medium">Nothing to compare yet</p>
+   832→   832→            <p className="max-w-xs text-[13px] leading-relaxed text-muted-foreground">
+   833→   833→              Star two or more listings from the grid — the sheet underwrites
+   834→   834→              each one and highlights the best-in-class metric.
+   835→   835→            </p>
+   836→   836→          </div>
+   837→   837→        ) : (
+   838→   838→          <>
+   839→   839→            {/* Verdict banner — income pick vs appreciation pick */}
+   840→   840→            <div className="grid min-w-0 gap-2 border-b px-5 py-3 sm:grid-cols-2">
+   841→   841→              <div className="flex min-w-0 items-start gap-2.5 rounded-lg border bg-card p-3">
+   842→   842→                <PiggyBank
+   843→   843→                  className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400"
+   844→   844→                  aria-hidden
+   845→   845→                />
+   846→   846→                <div className="min-w-0">
+   847→   847→                  <p className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground">
+   848→   848→                    Income pick
+   849→   849→                  </p>
+   850→   850→                  <p
+   851→   851→                    className="mt-0.5 truncate text-[13.5px] font-semibold"
+   852→   852→                    title={bestIncome ? pickTitle(bestIncome) : undefined}
+   853→   853→                  >
+   854→   854→                    {bestIncome ? pickTitle(bestIncome) : "No improved listings"}
+   855→   855→                  </p>
+   856→   856→                  {bestIncome ? (
+   857→   857→                    <p className="mt-0.5 text-[11.5px] text-muted-foreground tabular-nums">
+   858→   858→                      {bestIncome.cashFlow >= 0 ? "+" : "−"}
+   859→   859→                      {fmtCurrency(Math.abs(Math.round(bestIncome.cashFlow)), { compact: true })}/yr
+   860→   860→                      cash flow · {fmtPct(bestIncome.cashOnCash * 100)} CoC
+   861→   861→                    </p>
+   862→   862→                  ) : (
+   863→   863→                    <p className="mt-0.5 text-[11.5px] text-muted-foreground">
+   864→   864→                      Land parcels carry no rent until entitlement.
+   865→   865→                    </p>
+   866→   866→                  )}
+   867→   867→                </div>
+   868→   868→              </div>
+   869→   869→              <div className="flex min-w-0 items-start gap-2.5 rounded-lg border bg-card p-3">
+   870→   870→                <TrendingUp
+   871→   871→                  className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400"
+   872→   872→                  aria-hidden
+   873→   873→                />
+   874→   874→                <div className="min-w-0">
+   875→   875→                  <p className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground">
+   876→   876→                    Appreciation pick · 2046
+   877→   877→                  </p>
+   878→   878→                  <p
+   879→   879→                    className="mt-0.5 truncate text-[13.5px] font-semibold"
+   880→   880→                    title={bestEquity ? pickTitle(bestEquity) : undefined}
+   881→   881→                  >
+   882→   882→                    {bestEquity ? pickTitle(bestEquity) : "—"}
+   883→   883→                  </p>
+   884→   884→                  {bestEquity ? (
+   885→   885→                    <p className="mt-0.5 text-[11.5px] text-muted-foreground tabular-nums">
+   886→   886→                      {fmtCurrency(Math.round(bestEquity.fv2046), { compact: true })} at{" "}
+   887→   887→                      {fmtPct(bestEquity.listing.submarket?.projectedCagr ?? 0)} CAGR ·{" "}
+   888→   888→                      {bestEquity.multiple.toFixed(2)}× multiple
+   889→   889→                    </p>
+   890→   890→                  ) : null}
+   891→   891→                </div>
+   892→   892→              </div>
+   893→   893→              {bestIncome && bestEquity && bestIncome.listing.id !== bestEquity.listing.id ? (
+   894→   894→                <p className="sm:col-span-2 text-[11.5px] leading-relaxed text-muted-foreground">
+   895→   895→                  <Info className="mr-1 inline h-3 w-3 align-[-1px]" aria-hidden />
+   896→   896→                  The cash-flow pick and the appreciation pick diverge here — a
+   897→   897→                  classic Gorge split: entry markets carry the note better, while
+   898→   898→                  supply-starved markets compound harder.
+   899→   899→                </p>
+   900→   900→              ) : null}
+   901→   901→            </div>
+   902→   902→
+   903→   903→            {/* Comparison grid — horizontally scrollable, sticky label column */}
+   904→   904→            <div className="overflow-x-auto">
+   905→   905→              <div
+   906→   906→                className="grid border-b text-[12.5px]"
+   907→   907→                style={{
+   908→   908→                  gridTemplateColumns: `152px repeat(${entries.length}, minmax(168px, 1fr))`,
+   909→   909→                }}
+   910→   910→              >
+   911→   911→                {/* Header row: photos + titles */}
+   912→   912→                <div className="sticky left-0 z-10 border-r bg-background/95 backdrop-blur-sm" />
+   913→   913→                {entries.map((m) => {
+   914→   914→                  if (isWhatIf(m.listing.id)) {
+   915→   915→                    return (
+   916→   916→                      <div
+   917→   917→                        key={m.listing.id}
+   918→   918→                        className="relative min-w-0 border-r bg-amber-400/[0.04] last:border-r-0 dark:bg-amber-400/[0.07]"
+   919→   919→                      >
+   920→   920→                        <div className="flex aspect-[16/10] flex-col items-center justify-center gap-1.5 border-2 border-dashed border-amber-400/50 bg-amber-400/[0.06]">
+   921→   921→                          <FlaskConical
+   922→   922→                            className="h-5 w-5 text-amber-500/80 dark:text-amber-300/80"
+   923→   923→                            aria-hidden
+   924→   924→                          />
+   925→   925→                          <span className="text-[10.5px] font-bold tracking-widest text-amber-600 dark:text-amber-300">
+   926→   926→                            WHAT-IF
+   927→   927→                          </span>
+   928→   928→                        </div>
+   929→   929→                        <button
+   930→   930→                          type="button"
+   931→   931→                          onClick={() => removeWhatIf(m.listing)}
+   932→   932→                          aria-label={`Remove the ${m.listing.title} what-if`}
+   933→   933→                          title={`Remove the ${m.listing.title} what-if`}
+   934→   934→                          className="absolute right-1.5 top-1.5 z-10 flex h-6 w-6 items-center justify-center rounded-md border border-amber-400/40 bg-background/90 text-muted-foreground shadow-sm backdrop-blur-sm transition-colors hover:border-rose-400/60 hover:text-rose-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/70 dark:hover:text-rose-400"
+   935→   935→                        >
+   936→   936→                          <X className="h-3.5 w-3.5" aria-hidden />
+   937→   937→                        </button>
+   938→   938→                        <div className="p-2.5">
+   939→   939→                          <p
+   940→   940→                            className="truncate text-[13px] font-semibold leading-tight"
+   941→   941→                            title={m.listing.title}
+   942→   942→                          >
+   943→   943→                            {m.listing.title}
+   944→   944→                          </p>
+   945→   945→                          <p className="mt-0.5 truncate text-[10.5px] font-medium text-amber-600/90 dark:text-amber-300/80">
+   946→   946→                            {m.listing.propertyType}
+   947→   947→                          </p>
+   948→   948→                          <p className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+   949→   949→                            <span className="truncate">
+   950→   950→                              {m.listing.submarket?.name ?? "—"}{" "}
+   951→   951→                            </span>
+   952→   952→                            {m.listing.submarket ? (
+   953→   953→                              <StateBadge state={m.listing.submarket.state} />
+   954→   954→                            ) : null}
+   955→   955→                          </p>
+   956→   956→                        </div>
+   957→   957→                      </div>
+   958→   958→                    );
+   959→   959→                  }
+   960→   960→                  return (
+   961→   961→                    <div
+   962→   962→                      key={m.listing.id}
+   963→   963→                      className="relative min-w-0 border-r last:border-r-0"
+   964→   964→                    >
+   965→   965→                      <div className="relative aspect-[16/10] overflow-hidden">
+   966→   966→                        <Image
+   967→   967→                          src={m.listing.imageUrl}
+   968→   968→                          alt={m.listing.title}
+   969→   969→                          fill
+   970→   970→                          sizes="200px"
+   971→   971→                          className="object-cover"
+   972→   972→                        />
+   973→   973→                        <div className="absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-zinc-950/75 to-transparent" />
+   974→   974→                        <button
+   975→   975→                          type="button"
+   976→   976→                          onClick={() => onOpenListing?.(m.listing)}
+   977→   977→                          className="absolute inset-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-500/60"
+   978→   978→                          aria-label={`Open the ${m.listing.title} dossier`}
+   979→   979→                        />
+   980→   980→                      </div>
+   981→   981→                      <div className="p-2.5">
+   982→   982→                        <p
+   983→   983→                          className="truncate text-[13px] font-semibold leading-tight"
+   984→   984→                          title={m.listing.title}
+   985→   985→                        >
+   986→   986→                          {m.listing.title}
+   987→   987→                        </p>
+   988→   988→                        <p className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+   989→   989→                          <span className="truncate">{m.listing.submarket?.name ?? "—"} </span>
+   990→   990→                          {m.listing.submarket ? <StateBadge state={m.listing.submarket.state} /> : null}
+   991→   991→                        </p>
+   992→   992→                      </div>
+   993→   993→                    </div>
+   994→   994→                  );
+   995→   995→                })}
+   996→   996→
+   997→   997→                {/* Metric rows */}
+   998→   998→                {ROWS.map((row) => {
+   999→   999→                  const win = winnerOf(row, entries);
+  1000→  1000→                  return (
+  1001→  1001→                    <div key={row.key} className="contents">
+  1002→  1002→                      <div className="sticky left-0 z-10 border-r border-t bg-background/95 px-3 py-2.5 backdrop-blur-sm">
+  1003→  1003→                        <p className="text-[12px] font-semibold leading-tight">{row.label}</p>
+  1004→  1004→                        <p className="mt-0.5 text-[10.5px] text-muted-foreground">{row.hint}</p>
+  1005→  1005→                      </div>
+  1006→  1006→                      {entries.map((m) => {
+  1007→  1007→                        const isNa = row.na?.(m);
+  1008→  1008→                        const isWin = win && win.listing.id === m.listing.id;
+  1009→  1009→                        const rose = row.negativeRose?.(m);
+  1010→  1010→                        const hypothetical = isWhatIf(m.listing.id);
+  1011→  1011→                        return (
+  1012→  1012→                          <div
+  1013→  1013→                            key={`${row.key}-${m.listing.id}`}
+  1014→  1014→                            className={cn(
+  1015→  1015→                              "flex items-center justify-end border-r border-t px-3 py-2.5 text-right tabular-nums last:border-r-0",
+  1016→  1016→                              isWin
+  1017→  1017→                                ? "bg-emerald-500/[0.08] font-semibold text-emerald-700 dark:text-emerald-300"
+  1018→  1018→                                : isNa
+  1019→  1019→                                  ? "text-muted-foreground/60"
+  1020→  1020→                                  : rose
+  1021→  1021→                                    ? "text-rose-600 dark:text-rose-400"
+  1022→  1022→                                    : "text-foreground/90",
+  1023→  1023→                              // Amber wash on the hypothetical columns — the
+  1024→  1024→                              // emerald winner highlight takes precedence.
+  1025→  1025→                              hypothetical &&
+  1026→  1026→                                !isWin &&
+  1027→  1027→                                "bg-amber-400/[0.05] dark:bg-amber-400/[0.08]"
+  1028→  1028→                            )}
+  1029→  1029→                          >
+  1030→  1030→                            {isWin ? (
+  1031→  1031→                              <Crown className="mr-1.5 h-3 w-3 text-emerald-500" aria-hidden />
+  1032→  1032→                            ) : null}
+  1033→  1033→                            {isNa ? "—" : row.format(m)}
+  1034→  1034→                          </div>
+  1035→  1035→                        );
+  1036→  1036→                      })}
+  1037→  1037→                    </div>
+  1038→  1038→                  );
+  1039→  1039→                })}
+  1040→  1040→              </div>
+  1041→  1041→            </div>
+  1042→  1042→
+  1043→  1043→            <div className="mt-auto flex flex-wrap items-center justify-between gap-3 border-t bg-muted/30 px-5 py-3">
+  1044→  1044→              <div className="flex min-w-0 flex-col gap-1">
+  1045→  1045→                <p className="flex items-center gap-1.5 text-[11.5px] text-muted-foreground">
+  1046→  1046→                  <Check className="h-3.5 w-3.5 shrink-0 text-emerald-500" aria-hidden />
+  1047→  1047→                  Rent is market-indexed per round 6 — same floor plan pencils
+  1048→  1048→                  differently in Hood River vs Wishram.
+  1049→  1049→                </p>
+  1050→  1050→                {whatIfs.length > 0 ? (
+  1051→  1051→                  <p className="flex items-center gap-1.5 text-[11.5px] text-amber-700/90 dark:text-amber-300/80">
+  1052→  1052→                    <FlaskConical className="h-3.5 w-3.5 shrink-0 text-amber-500" aria-hidden />
+  1053→  1053→                    Amber columns are hypothetical entries — up to three at a
+  1054→  1054→                    time, each underwritten with the same sheet, never live
+  1055→  1055→                    listings.
+  1056→  1056→                  </p>
+  1057→  1057→                ) : null}
+  1058→  1058→              </div>
+  1059→  1059→              <div className="flex items-center gap-2">
+  1060→  1060→                {onOpenListing ? (
+  1061→  1061→                  <Button
+  1062→  1062→                    variant="ghost"
+  1063→  1063→                    size="sm"
+  1064→  1064→                    className="h-8 gap-1.5 text-[12.5px]"
+  1065→  1065→                    onClick={() => {
+  1066→  1066→                      if (entries[0]) onOpenListing(entries[0].listing);
+  1067→  1067→                    }}
+  1068→  1068→                  >
+  1069→  1069→                    Open first dossier
+  1070→  1070→                  </Button>
+  1071→  1071→                ) : null}
+  1072→  1072→                <Button
+  1073→  1073→                  size="sm"
+  1074→  1074→                  className="h-8 gap-1.5 bg-zinc-900 text-[12.5px] text-white hover:bg-zinc-800 dark:bg-emerald-500 dark:text-zinc-950 dark:hover:bg-emerald-400"
+  1075→  1075→                  onClick={exportCsv}
+  1076→  1076→                >
+  1077→  1077→                  <Download className="h-3.5 w-3.5" aria-hidden />
+  1078→  1078→                  Export CSV
+  1079→  1079→                </Button>
+  1080→  1080→              </div>
+  1081→  1081→            </div>
+  1082→  1082→          </>
+  1083→  1083→        )}
+  1084→  1084→      </SheetContent>
+  1085→  1085→    </Sheet>
+  1086→  1086→  );
+  1087→  1087→}
+  1088→  1088→
+  1089→  1089→/** Trigger + sheet in one — drop next to the watchlist chip in the filter bar. */
+  1090→  1090→export function CompareTrigger({
+  1091→  1091→  listings,
+  1092→  1092→  onOpenListing,
+  1093→  1093→  submarkets,
+  1094→  1094→}: {
+  1095→  1095→  listings: PropertyListing[];
+  1096→  1096→  onOpenListing?: (listing: PropertyListing) => void;
+  1097→  1097→  /** Forwarded to the sheet so the what-if editor can offer real markets. */
+  1098→  1098→  submarkets?: Submarket[];
+  1099→  1099→}) {
+  1100→  1100→  const watchlist = useWatchlist();
+  1101→  1101→  const [open, setOpen] = useState(false);
+  1102→  1102→  const count = watchlist.length;
+  1103→  1103→  return (
+  1104→  1104→    <>
+  1105→  1105→      <button
+  1106→  1106→        type="button"
+  1107→  1107→        disabled={count < 2}
+  1108→  1108→        onClick={() => setOpen(true)}
+  1109→  1109→        title={
+  1110→  1110→          count < 2
+  1111→  1111→            ? "Star two or more listings to unlock the comparison sheet"
+  1112→  1112→            : "Compare starred listings side-by-side"
+  1113→  1113→        }
+  1114→  1114→        aria-label={`Compare watchlist (${count} starred)`}
+  1115→  1115→        className={cn(
+  1116→  1116→          "inline-flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-[12px] font-medium transition-all active:scale-[0.97]",
+  1117→  1117→          count >= 2
+  1118→  1118→            ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-300"
+  1119→  1119→            : "cursor-not-allowed text-muted-foreground/60"
+  1120→  1120→        )}
+  1121→  1121→      >
+  1122→  1122→        <GitCompareArrows className="h-3.5 w-3.5" aria-hidden />
+  1123→  1123→        Compare
+  1124→  1124→        {count >= 2 ? (
+  1125→  1125→          <span className="rounded-sm bg-muted px-1 text-[11px] font-semibold tabular-nums">
+  1126→  1126→            {count}
+  1127→  1127→          </span>
+  1128→  1128→        ) : null}
+  1129→  1129→      </button>
+  1130→  1130→      <CompareSheet
+  1131→  1131→        listings={listings}
+  1132→  1132→        open={open}
+  1133→  1133→        onOpenChange={setOpen}
+  1134→  1134→        onOpenListing={(l) => {
+  1135→  1135→          setOpen(false);
+  1136→  1136→          onOpenListing?.(l);
+  1137→  1137→        }}
+  1138→  1138→        submarkets={submarkets}
+  1139→  1139→      />
+  1140→  1140→    </>
+  1141→  1141→  );
+  1142→  1142→}
+  1143→  1143→

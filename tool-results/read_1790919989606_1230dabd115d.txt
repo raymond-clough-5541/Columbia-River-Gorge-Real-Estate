@@ -1,0 +1,869 @@
+     1→"use client";
+     2→
+     3→import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+     4→import { Flame, Landmark, Layers, Pause, Play, RotateCcw, Timer, TrendingUp } from "lucide-react";
+     5→import { Slider } from "@/components/ui/slider";
+     6→import { cn } from "@/lib/utils";
+     7→import {
+     8→  RUNWAY_TIER_STYLES,
+     9→  fmtAcres,
+    10→  fmtCurrency,
+    11→  fmtPct,
+    12→  futureValue,
+    13→  netBuildableMid,
+    14→  runwayTier,
+    15→  runwayYears,
+    16→  type CorridorStats,
+    17→  type Submarket,
+    18→} from "@/lib/gorge";
+    19→import type { NavigateFn } from "./gorge-app";
+    20→import { MicroLabel } from "./shared";
+    21→
+    22→/* Map geometry: 0–100 market coordinates → 1000×460 viewBox units. */
+    23→const VW = 1000;
+    24→const VH = 460;
+    25→function pos(x: number, y: number) {
+    26→  return { px: 30 + x * 9.4, py: 20 + y * 4.2 };
+    27→}
+    28→
+    29→const TIER_FILL: Record<string, string> = {
+    30→  elite: "#10b981",
+    31→  strong: "#14b8a6",
+    32→  moderate: "#f59e0b",
+    33→  baseline: "#a1a1aa",
+    34→};
+    35→
+    36→function tierOf(cagr: number): string {
+    37→  if (cagr >= 5.5) return "elite";
+    38→  if (cagr >= 5.0) return "strong";
+    39→  if (cagr >= 4.7) return "moderate";
+    40→  return "baseline";
+    41→}
+    42→
+    43→/** Lens of the map: appreciation tiers vs depletion-runway heat. */
+    44→type MapMode = "cagr" | "runway";
+    45→
+    46→/** Timeline bounds — the 20-year analysis horizon. */
+    47→const T0 = 2026;
+    48→const T1 = 2046;
+    49→/** Wall-clock pace of the play animation: ms per projected year (≈8s sweep). */
+    50→const PLAY_MS_PER_YEAR = 400;
+    51→/** prefers-reduced-motion pace: discrete one-year steps, no tweening. */
+    52→const REDUCED_PLAY_MS_PER_YEAR = 700;
+    53→
+    54→const MODES: { id: MapMode; label: string; icon: typeof TrendingUp; hint: string }[] = [
+    55→  { id: "cagr", label: "Appreciation", icon: TrendingUp, hint: "Dot color = 20-yr CAGR tier" },
+    56→  { id: "runway", label: "Land runway", icon: Flame, hint: "Dot color = years of raw land left" },
+    57→];
+    58→
+    59→/** Fill color for a market under the active lens (dark zinc once spent). */
+    60→function dotFill(s: Submarket, mode: MapMode, spent: boolean): string {
+    61→  if (spent) return "#71717a";
+    62→  if (mode === "cagr") return TIER_FILL[tierOf(s.projectedCagr)];
+    63→  return RUNWAY_TIER_STYLES[runwayTier(runwayYears(s.depletionYear))].color;
+    64→}
+    65→
+    66→/** Per-slug label placement tweaks so names never collide. */
+    67→const LABEL_POS: Record<string, { dx: number; dy: number; anchor: "start" | "end" }> = {
+    68→  "north-bonneville": { dx: 22, dy: 5, anchor: "start" },
+    69→  stevenson: { dx: 24, dy: 5, anchor: "start" },
+    70→  "white-salmon": { dx: 24, dy: 5, anchor: "start" },
+    71→  bingen: { dx: 24, dy: 18, anchor: "start" },
+    72→  lyle: { dx: 24, dy: 5, anchor: "start" },
+    73→  dallesport: { dx: -24, dy: 5, anchor: "end" },
+    74→  wishram: { dx: -24, dy: 5, anchor: "end" },
+    75→  "cascade-locks": { dx: 24, dy: 5, anchor: "start" },
+    76→  mosier: { dx: 24, dy: 5, anchor: "start" },
+    77→  "hood-river": { dx: 24, dy: 18, anchor: "start" },
+    78→  "the-dalles": { dx: -24, dy: 5, anchor: "end" },
+    79→};
+    80→
+    81→const RIVER_PATH =
+    82→  "M 12 232 C 150 192, 250 272, 390 232 C 520 194, 630 272, 760 232 C 870 198, 940 268, 990 230";
+    83→
+    84→export function CorridorMap({
+    85→  submarkets,
+    86→  stats,
+    87→  navigate,
+    88→}: {
+    89→  submarkets: Submarket[];
+    90→  stats: CorridorStats;
+    91→  navigate: NavigateFn;
+    92→}) {
+    93→  const [hovered, setHovered] = useState<string | null>(null);
+    94→  const [mode, setMode] = useState<MapMode>("cagr");
+    95→
+    96→  /* ---------------- Depletion-timeline scrubber ---------------- */
+    97→  const [timelineYear, setTimelineYear] = useState(T0);
+    98→  const [playing, setPlaying] = useState(false);
+    99→  // Mirror the year in a ref so the rAF loop can capture its start value
+   100→  // without re-arming on every frame (exhaustive-deps stays clean).
+   101→  const yearRef = useRef(timelineYear);
+   102→  useEffect(() => {
+   103→    yearRef.current = timelineYear;
+   104→  }, [timelineYear]);
+   105→
+   106→  // One-shot autoplay guards for the depletion timeline. hasAutoPlayedRef
+   107→  // latches the first (and only) automatic sweep so it can never re-arm —
+   108→  // not even when the sweep ends at 2046. userInteractedRef records that a
+   109→  // human has already driven the timeline (play/pause, reset, scrub), which
+   110→  // always outranks autoplay: if they've touched it, we never yank it away.
+   111→  const hasAutoPlayedRef = useRef(false);
+   112→  const userInteractedRef = useRef(false);
+   113→  // Root element ref — the IntersectionObserver target for autoplay-on-view.
+   114→  const rootRef = useRef<HTMLDivElement | null>(null);
+   115→
+   116→  // prefers-reduced-motion — matched lazily after mount (matchMedia is
+   117→  // browser-only; reading it during render would break SSR/hydration) and
+   118→  // kept live via the change event, so a mid-session preference change
+   119→  // swaps the play loop in place.
+   120→  const [reducedMotion, setReducedMotion] = useState(false);
+   121→  useEffect(() => {
+   122→    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+   123→    const sync = () => setReducedMotion(mq.matches);
+   124→    sync();
+   125→    mq.addEventListener("change", sync);
+   126→    return () => mq.removeEventListener("change", sync);
+   127→  }, []);
+   128→
+   129→  useEffect(() => {
+   130→    if (!playing) return;
+   131→    // Reduced motion: one discrete year per tick — no rAF interpolation,
+   132→    // no smooth tweening. Pause/reset/scrub behavior is unchanged.
+   133→    if (reducedMotion) {
+   134→      let year = yearRef.current;
+   135→      const id = window.setInterval(() => {
+   136→        year = Math.min(T1, year + 1);
+   137→        setTimelineYear(year);
+   138→        if (year >= T1) {
+   139→          setPlaying(false);
+   140→          window.clearInterval(id);
+   141→        }
+   142→      }, REDUCED_PLAY_MS_PER_YEAR);
+   143→      return () => window.clearInterval(id);
+   144→    }
+   145→    const startedAt = performance.now();
+   146→    const from = yearRef.current;
+   147→    let raf = 0;
+   148→    const tick = (now: number) => {
+   149→      const next = Math.min(T1, Math.round(from + (now - startedAt) / PLAY_MS_PER_YEAR));
+   150→      setTimelineYear(next);
+   151→      if (next >= T1) {
+   152→        setPlaying(false);
+   153→        return;
+   154→      }
+   155→      raf = requestAnimationFrame(tick);
+   156→    };
+   157→    raf = requestAnimationFrame(tick);
+   158→    return () => cancelAnimationFrame(raf);
+   159→  }, [playing, reducedMotion]);
+   160→
+   161→  const scrub = (year: number) => {
+   162→    // Scrubbing (slider drag, keyboard step, or the reset button) is manual
+   163→    // control of the timeline — autoplay stands down permanently.
+   164→    userInteractedRef.current = true;
+   165→    setPlaying(false);
+   166→    setTimelineYear(year);
+   167→  };
+   168→  // useCallback so the autoplay observer effect below can call the existing
+   169→  // play path without re-arming on every render (identity only flips when
+   170→  // `playing` does — at most twice per sweep).
+   171→  const togglePlay = useCallback(() => {
+   172→    // Manual play/pause is likewise manual control — disable autoplay.
+   173→    userInteractedRef.current = true;
+   174→    if (playing) {
+   175→      setPlaying(false);
+   176→      return;
+   177→    }
+   178→    // At the end of the reel, play restarts from the 2026 baseline.
+   179→    if (yearRef.current >= T1) setTimelineYear(T0);
+   180→    setPlaying(true);
+   181→  }, [playing]);
+   182→
+   183→  /* Autoplay-once-in-view: the map sits deep in the overview page and many
+   184→     readers never reach the scrubber by hand. The first time 35% of the
+   185→     component scrolls into view — and only if the user hasn't already
+   186→     played/scrubbed, playback isn't running, and reduced motion is off —
+   187→     start the depletion sweep exactly once through the normal play path.
+   188→     The observer disconnects as soon as it has fired and the effect cleans
+   189→     up on unmount; the hasAutoPlayedRef latch guarantees no restart loop
+   190→     when the sweep reaches 2046 (end-of-reel restart stays manual-only). */
+   191→  useEffect(() => {
+   192→    const root = rootRef.current;
+   193→    if (!root) return;
+   194→    const observer = new IntersectionObserver(
+   195→      (entries) => {
+   196→        if (!entries.some((entry) => entry.isIntersecting)) return;
+   197→        // First crossing of the threshold: stop observing before deciding,
+   198→        // so a single observer instance can never fire twice.
+   199→        observer.disconnect();
+   200→        if (
+   201→          hasAutoPlayedRef.current ||
+   202→          userInteractedRef.current ||
+   203→          playing ||
+   204→          reducedMotion // reduced motion ⇒ no autoplay at all, not even discrete steps
+   205→        ) {
+   206→          return;
+   207→        }
+   208→        hasAutoPlayedRef.current = true;
+   209→        togglePlay();
+   210→      },
+   211→      { threshold: 0.35 },
+   212→    );
+   213→    observer.observe(root);
+   214→    return () => observer.disconnect();
+   215→  }, [playing, reducedMotion, togglePlay]);
+   216→
+   217→  const spentCount = useMemo(
+   218→    () => submarkets.filter((s) => timelineYear >= s.depletionYear).length,
+   219→    [submarkets, timelineYear]
+   220→  );
+   221→
+   222→  /* Year-synced KPI readouts — every figure is recomputed from the
+   223→     submarket data at the scrub year (never hard-coded). */
+   224→  const kpis = useMemo(() => {
+   225→    // 1 · Median projected corridor price as of the scrub year.
+   226→    const projected = submarkets
+   227→      .map((s) => futureValue(s.baselinePrice2026, s.projectedCagr, timelineYear - T0))
+   228→      .sort((a, b) => a - b);
+   229→    const mid = Math.floor(projected.length / 2);
+   230→    const medianPrice =
+   231→      projected.length === 0
+   232→        ? 0
+   233→        : projected.length % 2 === 1
+   234→          ? projected[mid]
+   235→          : (projected[mid - 1] + projected[mid]) / 2;
+   236→    const priceDeltaPct =
+   237→      stats.regionalMedianPrice > 0
+   238→        ? (medianPrice / stats.regionalMedianPrice - 1) * 100
+   239→        : 0;
+   240→
+   241→    // 2 + 3 · Live reserve + next exhaustion, one pass over the corridor.
+   242→    let fullReserve = 0;
+   243→    let liveReserve = 0;
+   244→    // Per-state split of the live reserve at the scrub year (OR slate /
+   245→    // WA emerald in the reserve tile's split bar).
+   246→    let liveReserveOR = 0;
+   247→    let liveReserveWA = 0;
+   248→    let liveMarkets = 0;
+   249→    let next: { year: number; name: string; yearsOut: number; tierColor: string } | null =
+   250→      null;
+   251→    for (const s of submarkets) {
+   252→      const acresMid = netBuildableMid(s);
+   253→      fullReserve += acresMid;
+   254→      if (timelineYear < s.depletionYear) {
+   255→        liveReserve += acresMid;
+   256→        if (s.state === "OR") liveReserveOR += acresMid;
+   257→        else liveReserveWA += acresMid;
+   258→        liveMarkets += 1;
+   259→        if (!next || s.depletionYear < next.year) {
+   260→          next = {
+   261→            year: s.depletionYear,
+   262→            name: s.name,
+   263→            yearsOut: s.depletionYear - timelineYear,
+   264→            tierColor: RUNWAY_TIER_STYLES[runwayTier(s.depletionYear - timelineYear)].color,
+   265→          };
+   266→        }
+   267→      }
+   268→    }
+   269→    const reservePct = fullReserve > 0 ? (liveReserve / fullReserve) * 100 : 0;
+   270→    // OR's share of the live reserve for the split bar; 0 (not NaN) when
+   271→    // the corridor is fully built out and there is nothing left to split.
+   272→    const liveReserveORShare = liveReserve > 0 ? (liveReserveOR / liveReserve) * 100 : 0;
+   273→
+   274→    return {
+   275→      medianPrice,
+   276→      priceDeltaPct,
+   277→      liveReserve,
+   278→      liveReserveOR,
+   279→      liveReserveWA,
+   280→      liveReserveORShare,
+   281→      liveMarkets,
+   282→      reservePct,
+   283→      next,
+   284→    };
+   285→  }, [submarkets, stats.regionalMedianPrice, timelineYear]);
+   286→
+   287→  const dots = useMemo(
+   288→    () =>
+   289→      submarkets.map((s) => {
+   290→        const { px, py } = pos(s.mapX, s.mapY);
+   291→        const netMid = (s.netBuildableAcresMin + s.netBuildableAcresMax) / 2;
+   292→        const r = 9 + netMid * 0.065;
+   293→        const tier = tierOf(s.projectedCagr);
+   294→        const label = LABEL_POS[s.slug] ?? { dx: 24, dy: 5, anchor: "start" as const };
+   295→        return { s, px, py, r, tier, netMid, label };
+   296→      }),
+   297→    [submarkets]
+   298→  );
+   299→
+   300→  const hoveredDot = dots.find((d) => d.s.slug === hovered) ?? null;
+   301→  const orShare = stats.orNetBuildable + stats.waNetBuildable > 0
+   302→    ? (stats.orNetBuildable / (stats.orNetBuildable + stats.waNetBuildable)) * 100
+   303→    : 50;
+   304→
+   305→  return (
+   306→    <div ref={rootRef} className="rounded-xl border bg-card p-4 shadow-sm sm:p-6">
+   307→      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+   308→        <div>
+   309→          <MicroLabel>Regional Map Summary</MicroLabel>
+   310→          <p className="mt-1 text-sm text-muted-foreground">
+   311→            All 11 jurisdictions · dot size = net buildable acres ·{" "}
+   312→            {mode === "cagr"
+   313→              ? "color = 20-yr CAGR tier"
+   314→              : "color = raw-land runway remaining"}
+   315→            {timelineYear > T0 ? (
+   316→              <>
+   317→                {" · as of "}
+   318→                <span className="font-semibold tabular-nums text-foreground">
+   319→                  {timelineYear}
+   320→                </span>
+   321→              </>
+   322→            ) : null}
+   323→          </p>
+   324→        </div>
+   325→        {/* Lens toggle — segmented control */}
+   326→        <div
+   327→          role="radiogroup"
+   328→          aria-label="Map color lens"
+   329→          className="flex rounded-lg border bg-background p-0.5"
+   330→        >
+   331→          {MODES.map((m) => {
+   332→            const active = mode === m.id;
+   333→            return (
+   334→              <button
+   335→                key={m.id}
+   336→                type="button"
+   337→                role="radio"
+   338→                aria-checked={active}
+   339→                title={m.hint}
+   340→                onClick={() => setMode(m.id)}
+   341→                className={cn(
+   342→                  "inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-[12px] font-semibold transition-all active:scale-[0.97]",
+   343→                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60 focus-visible:ring-offset-1 focus-visible:ring-offset-background",
+   344→                  active
+   345→                    ? "bg-zinc-900 text-white shadow-sm dark:bg-emerald-500 dark:text-zinc-950"
+   346→                    : "text-muted-foreground hover:text-foreground"
+   347→                )}
+   348→              >
+   349→                <m.icon className="h-3.5 w-3.5" aria-hidden />
+   350→                {m.label}
+   351→              </button>
+   352→            );
+   353→          })}
+   354→        </div>
+   355→      </div>
+   356→
+   357→      <div className="relative overflow-x-auto">
+   358→        <div className="relative min-w-[680px]">
+   359→          <svg
+   360→            viewBox={`0 0 ${VW} ${VH}`}
+   361→            className="h-auto w-full"
+   362→            role="img"
+   363→            aria-label="Map of the Columbia River Gorge corridor showing the 11 analyzed micro-markets on both sides of the river"
+   364→          >
+   365→            {/* State backdrops */}
+   366→            <rect x="0" y="0" width={VW} height="205" rx="10" className="fill-teal-500/[0.04] dark:fill-teal-400/[0.05]" />
+   367→            <rect x="0" y="255" width={VW} height={VH - 255} rx="10" className="fill-amber-500/[0.05] dark:fill-amber-400/[0.04]" />
+   368→
+   369→            <text x="28" y="36" className="fill-zinc-400 dark:fill-zinc-500" fontSize="17" fontWeight="700" letterSpacing="6">
+   370→              WASHINGTON
+   371→            </text>
+   372→            <text x="28" y={VH - 18} className="fill-zinc-400 dark:fill-zinc-500" fontSize="17" fontWeight="700" letterSpacing="6">
+   373→              OREGON
+   374→            </text>
+   375→
+   376→            {/* Highways */}
+   377→            <path
+   378→              d="M 15 300 C 160 285, 300 315, 450 300 C 600 285, 740 315, 985 300"
+   379→              className="stroke-zinc-300 dark:stroke-zinc-700"
+   380→              strokeWidth="3" strokeDasharray="10 8" fill="none"
+   381→            />
+   382→            <path
+   383→              d="M 15 165 C 160 150, 300 180, 450 165 C 600 150, 740 180, 985 165"
+   384→              className="stroke-zinc-300 dark:stroke-zinc-700"
+   385→              strokeWidth="3" strokeDasharray="10 8" fill="none"
+   386→            />
+   387→            <text x="500" y="296" textAnchor="middle" className="fill-zinc-400 dark:fill-zinc-600" fontSize="11" letterSpacing="3">
+   388→              I-84
+   389→            </text>
+   390→            <text x="500" y="161" textAnchor="middle" className="fill-zinc-400 dark:fill-zinc-600" fontSize="11" letterSpacing="3">
+   391→              SR-14
+   392→            </text>
+   393→
+   394→            {/* Columbia River */}
+   395→            <path
+   396→              d={RIVER_PATH}
+   397→              className="stroke-sky-200/70 dark:stroke-sky-400/25"
+   398→              strokeWidth="46" strokeLinecap="round" fill="none"
+   399→            />
+   400→            <path
+   401→              d={RIVER_PATH}
+   402→              className="stroke-sky-300/80 dark:stroke-sky-500/40"
+   403→              strokeWidth="4" strokeLinecap="round" fill="none"
+   404→            />
+   405→            <text
+   406→              x="500" y="238" textAnchor="middle" rotate={-3}
+   407→              className="fill-sky-500/70 dark:fill-sky-300/60"
+   408→              fontSize="13" fontWeight="700" letterSpacing="7"
+   409→            >
+   410→              COLUMBIA RIVER
+   411→            </text>
+   412→
+   413→            {/* Market dots */}
+   414→            {dots.map(({ s, px, py, r, label }) => {
+   415→              const active = hovered === s.slug;
+   416→              const spent = timelineYear >= s.depletionYear;
+   417→              const fill = dotFill(s, mode, spent);
+   418→              const runway = runwayYears(s.depletionYear);
+   419→              return (
+   420→                <g
+   421→                  key={s.slug}
+   422→                  className="cursor-pointer transition-opacity"
+   423→                  onClick={() => navigate({ view: "submarket", slug: s.slug })}
+   424→                  onMouseEnter={() => setHovered(s.slug)}
+   425→                  onMouseLeave={() => setHovered(null)}
+   426→                  role="button"
+   427→                  aria-label={`Open ${s.name}, ${s.state} micro-market profile`}
+   428→                >
+   429→                  <circle cx={px} cy={py} r={r + 15} fill="transparent" />
+   430→                  {active ? (
+   431→                    <circle cx={px} cy={py} r={r + 9} fill={fill} opacity="0.22" />
+   432→                  ) : null}
+   433→                  {spent ? (
+   434→                    <circle
+   435→                      cx={px} cy={py} r={r + 5.5}
+   436→                      fill="none"
+   437→                      stroke="#71717a"
+   438→                      strokeWidth="1.5"
+   439→                      strokeDasharray="3 4"
+   440→                      opacity={active ? 0.8 : 0.55}
+   441→                    />
+   442→                  ) : null}
+   443→                  <circle
+   444→                    cx={px} cy={py} r={r}
+   445→                    fill={fill}
+   446→                    opacity={spent ? (active ? 0.7 : 0.42) : active ? 1 : 0.88}
+   447→                    className="stroke-white dark:stroke-zinc-950"
+   448→                    strokeWidth="2.5"
+   449→                  />
+   450→                  <text
+   451→                    x={px + label.dx} y={py + label.dy}
+   452→                    textAnchor={label.anchor}
+   453→                    fontSize="16.5"
+   454→                    fontWeight={active ? 700 : 600}
+   455→                    className={cn(
+   456→                      active
+   457→                        ? "fill-zinc-900 dark:fill-zinc-50"
+   458→                        : "fill-zinc-500 dark:fill-zinc-300",
+   459→                      spent && !active && "fill-zinc-400/80 dark:fill-zinc-500"
+   460→                    )}
+   461→                  >
+   462→                    {s.slug === "north-bonneville" ? "N. Bonneville" : s.name}
+   463→                  </text>
+   464→                  <text
+   465→                    x={px + label.dx} y={py + label.dy + 16}
+   466→                    textAnchor={label.anchor}
+   467→                    fontSize="12.5"
+   468→                    className={cn(
+   469→                      "tabular-nums",
+   470→                      spent
+   471→                        ? "fill-zinc-400/90 dark:fill-zinc-500"
+   472→                        : "fill-zinc-400 dark:fill-zinc-500"
+   473→                    )}
+   474→                  >
+   475→                    {spent
+   476→                      ? `${s.state} · exhausted ${s.depletionYear}`
+   477→                      : mode === "cagr"
+   478→                        ? `${s.state} · ${fmtPct(s.projectedCagr)}`
+   479→                        : `${s.state} · ${runway} yrs land`}
+   480→                  </text>
+   481→                </g>
+   482→              );
+   483→            })}
+   484→          </svg>
+   485→
+   486→          {/* Hover tooltip */}
+   487→          {hoveredDot ? (
+   488→            <div
+   489→              className="pointer-events-none absolute z-10 w-52 -translate-x-1/2 -translate-y-[115%] rounded-lg border bg-popover p-3 text-popover-foreground shadow-xl"
+   490→              style={{
+   491→                left: `${(hoveredDot.px / VW) * 100}%`,
+   492→                top: `${(hoveredDot.py / VH) * 100}%`,
+   493→              }}
+   494→            >
+   495→              <p className="text-sm font-semibold">
+   496→                {hoveredDot.s.name},{" "}
+   497→                <span className="text-muted-foreground">{hoveredDot.s.state}</span>
+   498→              </p>
+   499→              <p className="mt-1 text-[12px] text-muted-foreground">
+   500→                {hoveredDot.s.jurisdictionType}
+   501→              </p>
+   502→              <div className="mt-2 space-y-1 text-[12px] tabular-nums">
+   503→                <div className="flex justify-between gap-3">
+   504→                  <span className="text-muted-foreground">Net buildable</span>
+   505→                  <span className="font-medium">
+   506→                    {fmtAcres(hoveredDot.netMid)} band
+   507→                  </span>
+   508→                </div>
+   509→                {mode === "cagr" ? (
+   510→                  <div className="flex justify-between gap-3">
+   511→                    <span className="text-muted-foreground">20-yr CAGR</span>
+   512→                    <span className="font-medium text-emerald-600 dark:text-emerald-400">
+   513→                      {fmtPct(hoveredDot.s.projectedCagr)}
+   514→                    </span>
+   515→                  </div>
+   516→                ) : (
+   517→                  <div className="flex justify-between gap-3">
+   518→                    <span className="text-muted-foreground">Land runway</span>
+   519→                    <span
+   520→                      className="font-medium"
+   521→                      style={{
+   522→                        color: RUNWAY_TIER_STYLES[
+   523→                          runwayTier(runwayYears(hoveredDot.s.depletionYear))
+   524→                        ].color,
+   525→                      }}
+   526→                    >
+   527→                      {runwayYears(hoveredDot.s.depletionYear)} yrs ·{" "}
+   528→                      {RUNWAY_TIER_STYLES[
+   529→                        runwayTier(runwayYears(hoveredDot.s.depletionYear))
+   530→                      ].label.toLowerCase()}
+   531→                    </span>
+   532→                  </div>
+   533→                )}
+   534→                <div className="flex justify-between gap-3">
+   535→                  <span className="text-muted-foreground">Depletion</span>
+   536→                  <span className="font-medium">{hoveredDot.s.depletionYear}</span>
+   537→                </div>
+   538→                {timelineYear > T0 ? (
+   539→                  <div className="flex justify-between gap-3">
+   540→                    <span className="text-muted-foreground">As of {timelineYear}</span>
+   541→                    <span
+   542→                      className={cn(
+   543→                        "font-medium",
+   544→                        timelineYear >= hoveredDot.s.depletionYear
+   545→                          ? "text-rose-600 dark:text-rose-400"
+   546→                          : "text-emerald-600 dark:text-emerald-400"
+   547→                      )}
+   548→                    >
+   549→                      {timelineYear >= hoveredDot.s.depletionYear
+   550→                        ? `exhausted ${timelineYear - hoveredDot.s.depletionYear} yr${
+   551→                            timelineYear - hoveredDot.s.depletionYear === 1 ? "" : "s"
+   552→                          } prior`
+   553→                        : `${hoveredDot.s.depletionYear - timelineYear} yrs of runway left`}
+   554→                    </span>
+   555→                  </div>
+   556→                ) : null}
+   557→              </div>
+   558→              <p className="mt-2 border-t pt-1.5 text-[11px] text-muted-foreground">
+   559→                Click to open profile →
+   560→              </p>
+   561→            </div>
+   562→          ) : null}
+   563→        </div>
+   564→      </div>
+   565→
+   566→      {/* Year-synced KPI readouts — recomputed from the corridor data at the scrub year */}
+   567→      <div className="mt-4 grid gap-3 sm:grid-cols-3">
+   568→        <div className="rounded-lg border bg-muted/30 p-3">
+   569→          <div className="flex items-center gap-1.5">
+   570→            <Landmark className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+   571→            <MicroLabel className="min-w-0">Median price · as of {timelineYear}</MicroLabel>
+   572→          </div>
+   573→          <p className="mt-2 text-[17px] font-semibold tracking-tight tabular-nums">
+   574→            {fmtCurrency(kpis.medianPrice, { compact: true })}
+   575→          </p>
+   576→          <p
+   577→            className={cn(
+   578→              "mt-0.5 text-[11.5px] tabular-nums",
+   579→              kpis.priceDeltaPct > 0
+   580→                ? "text-emerald-600 dark:text-emerald-400"
+   581→                : "text-muted-foreground"
+   582→            )}
+   583→          >
+   584→            {kpis.priceDeltaPct >= 0 ? "+" : "−"}
+   585→            {Math.abs(Math.round(kpis.priceDeltaPct))}% vs 2026 baseline
+   586→          </p>
+   587→        </div>
+   588→
+   589→        <div className="min-w-0 rounded-lg border bg-muted/30 p-3">
+   590→          <div className="flex items-center gap-1.5">
+   591→            <Layers className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+   592→            <MicroLabel className="min-w-0">Live buildable reserve</MicroLabel>
+   593→          </div>
+   594→          <p className="mt-2 text-[17px] font-semibold tracking-tight tabular-nums">
+   595→            {fmtAcres(kpis.liveReserve)}
+   596→          </p>
+   597→          <p
+   598→            className={cn(
+   599→              "mt-0.5 text-[11.5px] tabular-nums",
+   600→              kpis.liveMarkets === 0
+   601→                ? "text-rose-600 dark:text-rose-400"
+   602→                : "text-muted-foreground"
+   603→            )}
+   604→          >
+   605→            {kpis.liveMarkets === 0
+   606→              ? "corridor fully built out"
+   607→              : `${Math.round(kpis.reservePct)}% of the 2026 reserve`}
+   608→          </p>
+   609→          {/* OR/WA split of the live reserve at the scrub year — slate =
+   610→              Oregon, emerald = Washington; muted zinc once nothing is left.
+   611→              Purely decorative: the caption below carries the same data as
+   612→              real text, so the bar itself stays hidden from screen readers. */}
+   613→          <div className="mt-2 flex h-1.5 overflow-hidden rounded-full bg-muted" aria-hidden>
+   614→            {kpis.liveReserve > 0 ? (
+   615→              <>
+   616→                <div
+   617→                  className="h-full bg-slate-500 dark:bg-slate-400"
+   618→                  style={{ width: `${kpis.liveReserveORShare}%` }}
+   619→                />
+   620→                <div
+   621→                  className="h-full bg-emerald-500"
+   622→                  style={{ width: `${100 - kpis.liveReserveORShare}%` }}
+   623→                />
+   624→              </>
+   625→            ) : (
+   626→              <div className="h-full w-full bg-zinc-300/70 dark:bg-zinc-700/70" />
+   627→            )}
+   628→          </div>
+   629→          <p className="mt-1 min-w-0 truncate text-[10.5px] tabular-nums text-muted-foreground">
+   630→            <span className="font-medium text-slate-600 dark:text-slate-300">OR</span>{" "}
+   631→            {fmtAcres(kpis.liveReserveOR)} ·{" "}
+   632→            <span className="font-medium text-emerald-600 dark:text-emerald-400">WA</span>{" "}
+   633→            {fmtAcres(kpis.liveReserveWA)}
+   634→          </p>
+   635→        </div>
+   636→
+   637→        <div className="rounded-lg border bg-muted/30 p-3">
+   638→          <div className="flex items-center gap-1.5">
+   639→            <Timer className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+   640→            <MicroLabel className="min-w-0">Next exhaustion</MicroLabel>
+   641→          </div>
+   642→          <p className="mt-2 text-[17px] font-semibold tracking-tight tabular-nums">
+   643→            {kpis.next ? (
+   644→              <>
+   645→                <span style={{ color: kpis.next.tierColor }}>{kpis.next.year}</span>
+   646→                <span className="font-medium text-muted-foreground">
+   647→                  {" · "}
+   648→                  {kpis.next.name}
+   649→                </span>
+   650→              </>
+   651→            ) : (
+   652→              <span className="text-muted-foreground">—</span>
+   653→            )}
+   654→          </p>
+   655→          <p
+   656→            className={cn(
+   657→              "mt-0.5 text-[11.5px] tabular-nums",
+   658→              kpis.next ? "text-muted-foreground" : "text-rose-600 dark:text-rose-400"
+   659→            )}
+   660→          >
+   661→            {kpis.next
+   662→              ? `${kpis.next.yearsOut} ${
+   663→                  kpis.next.yearsOut === 1 ? "yr" : "yrs"
+   664→                } out from ${timelineYear}`
+   665→              : "every market is past exhaustion"}
+   666→          </p>
+   667→        </div>
+   668→      </div>
+   669→
+   670→      {/* Depletion-timeline scrubber — watch the corridor go dark */}
+   671→      <div className="mt-4 rounded-xl border bg-muted/30 p-3.5 sm:p-4">
+   672→        <div className="mb-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+   673→          <div className="flex items-center gap-2.5">
+   674→            <button
+   675→              type="button"
+   676→              onClick={togglePlay}
+   677→              aria-label={playing ? "Pause the depletion timeline" : "Play the depletion timeline"}
+   678→              title={playing ? "Pause" : "Play 2026 → 2046"}
+   679→              className={cn(
+   680→                "flex h-8 w-8 items-center justify-center rounded-full border transition-all active:scale-90",
+   681→                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60 focus-visible:ring-offset-1 focus-visible:ring-offset-background",
+   682→                playing
+   683→                  ? "bg-zinc-900 text-white dark:bg-emerald-500 dark:text-zinc-950"
+   684→                  : "border-zinc-300 text-foreground hover:border-emerald-500/60 hover:text-emerald-600 dark:border-zinc-700 dark:hover:text-emerald-400"
+   685→              )}
+   686→            >
+   687→              {playing ? (
+   688→                <Pause className="h-3.5 w-3.5" aria-hidden />
+   689→              ) : (
+   690→                <Play className="ml-0.5 h-3.5 w-3.5" aria-hidden />
+   691→              )}
+   692→            </button>
+   693→            <button
+   694→              type="button"
+   695→              onClick={() => scrub(T0)}
+   696→              disabled={timelineYear === T0 && !playing}
+   697→              aria-label="Reset the timeline to 2026"
+   698→              title="Reset to 2026"
+   699→              className={cn(
+   700→                "flex h-8 w-8 items-center justify-center rounded-full border transition-all active:scale-90",
+   701→                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60 focus-visible:ring-offset-1 focus-visible:ring-offset-background",
+   702→                timelineYear === T0
+   703→                  ? "cursor-default text-muted-foreground/50"
+   704→                  : "border-zinc-300 text-foreground hover:border-emerald-500/60 hover:text-emerald-600 dark:border-zinc-700 dark:hover:text-emerald-400"
+   705→              )}
+   706→            >
+   707→              <RotateCcw className="h-3.5 w-3.5" aria-hidden />
+   708→            </button>
+   709→            <div>
+   710→              <MicroLabel>Depletion Timeline</MicroLabel>
+   711→              <p className="mt-0.5 text-[11px] text-muted-foreground tabular-nums">
+   712→                2026 → 2046 · ticks mark each exhaustion year
+   713→              </p>
+   714→            </div>
+   715→          </div>
+   716→          <p className="text-[12.5px] text-muted-foreground tabular-nums">
+   717→            As of{" "}
+   718→            <span className="text-[15px] font-semibold text-foreground">
+   719→              {timelineYear}
+   720→            </span>
+   721→            <span
+   722→              className={cn(
+   723→                "ml-2.5 rounded-md px-2 py-0.5 text-[11px] font-semibold",
+   724→                spentCount > 0
+   725→                  ? "bg-rose-500/15 text-rose-700 dark:text-rose-300"
+   726→                  : "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+   727→              )}
+   728→            >
+   729→              {spentCount} of {submarkets.length} past exhaustion
+   730→            </span>
+   731→          </p>
+   732→        </div>
+   733→
+   734→        <div className="relative">
+   735→          <Slider
+   736→            value={[timelineYear]}
+   737→            min={T0}
+   738→            max={T1}
+   739→            step={1}
+   740→            onValueChange={(v) => scrub(v[0])}
+   741→            // Capture-phase listeners flag manual control even when a press
+   742→            // or keypress doesn't (yet) move the value — autoplay must never
+   743→            // yank the slider out from under a user who has just grabbed it.
+   744→            onPointerDownCapture={() => {
+   745→              userInteractedRef.current = true;
+   746→            }}
+   747→            onKeyDownCapture={() => {
+   748→              userInteractedRef.current = true;
+   749→            }}
+   750→            aria-label="Scrub the depletion timeline year"
+   751→          />
+   752→          {/* Exhaustion-year tick marks, punched out of the track */}
+   753→          {submarkets.map((s) => {
+   754→            const pct = ((s.depletionYear - T0) / (T1 - T0)) * 100;
+   755→            const passed = timelineYear >= s.depletionYear;
+   756→            return (
+   757→              <span
+   758→                key={s.slug}
+   759→                className="pointer-events-none absolute top-1/2 -translate-x-1/2 -translate-y-1/2"
+   760→                style={{ left: `${pct}%` }}
+   761→                title={`${s.name} exhausts ${s.depletionYear}`}
+   762→              >
+   763→                <span
+   764→                  className={cn(
+   765→                    "block h-2 w-2 rounded-full ring-[2.5px] ring-[#e4e4e7] dark:ring-[#27272a]",
+   766→                    passed
+   767→                      ? "bg-rose-500"
+   768→                      : "bg-zinc-400 dark:bg-zinc-500"
+   769→                  )}
+   770→                  aria-hidden
+   771→                />
+   772→              </span>
+   773→            );
+   774→          })}
+   775→        </div>
+   776→        <div className="mt-1.5 flex justify-between text-[10.5px] font-medium text-muted-foreground tabular-nums">
+   777→          <span>2026 · full inventories</span>
+   778→          <span>2046 · build-out</span>
+   779→        </div>
+   780→      </div>
+   781→
+   782→      {/* Legend + OR/WA split */}
+   783→      <div className="mt-4 flex flex-col gap-4 border-t pt-4 lg:flex-row lg:items-center lg:justify-between">
+   784→        {mode === "cagr" ? (
+   785→          <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-[11px] text-muted-foreground">
+   786→            {(
+   787→              [
+   788→                ["elite", "≥ 5.5% CAGR"],
+   789→                ["strong", "5.0–5.5%"],
+   790→                ["moderate", "4.7–5.0%"],
+   791→                ["baseline", "< 4.7%"],
+   792→              ] as const
+   793→            ).map(([tier, text]) => (
+   794→              <span key={tier} className="inline-flex items-center gap-1.5">
+   795→                <span
+   796→                  className="h-2.5 w-2.5 rounded-full"
+   797→                  style={{ backgroundColor: TIER_FILL[tier] }}
+   798→                  aria-hidden
+   799→                />
+   800→                {text}
+   801→              </span>
+   802→            ))}
+   803→          </div>
+   804→        ) : (
+   805→          <div className="min-w-0 flex-1 max-w-md" aria-label="Runway heat legend">
+   806→            <div className="mb-1 flex items-baseline justify-between text-[10.5px] font-medium uppercase tracking-wider text-muted-foreground">
+   807→              <span>Raw-land runway heat</span>
+   808→              <span className="tabular-nums normal-case tracking-normal">
+   809→                6 → 12 years left
+   810→              </span>
+   811→            </div>
+   812→            <div className="flex h-2.5 overflow-hidden rounded-full border">
+   813→              {(Object.keys(RUNWAY_TIER_STYLES) as (keyof typeof RUNWAY_TIER_STYLES)[]).map(
+   814→                (k) => (
+   815→                  <div
+   816→                    key={k}
+   817→                    className="h-full flex-1"
+   818→                    style={{
+   819→                      backgroundColor: `${RUNWAY_TIER_STYLES[k].color}cc`,
+   820→                    }}
+   821→                    title={`${RUNWAY_TIER_STYLES[k].years} · ${RUNWAY_TIER_STYLES[k].label}`}
+   822→                  />
+   823→                )
+   824→              )}
+   825→            </div>
+   826→            <div className="mt-1 flex justify-between text-[10.5px] text-muted-foreground">
+   827→              {(Object.keys(RUNWAY_TIER_STYLES) as (keyof typeof RUNWAY_TIER_STYLES)[]).map(
+   828→                (k) => (
+   829→                  <span
+   830→                    key={k}
+   831→                    className="inline-flex items-center gap-1"
+   832→                    title={`${RUNWAY_TIER_STYLES[k].years} · ${RUNWAY_TIER_STYLES[k].label}`}
+   833→                  >
+   834→                    <span
+   835→                      className="h-2 w-2 rounded-full"
+   836→                      style={{ backgroundColor: RUNWAY_TIER_STYLES[k].color }}
+   837→                      aria-hidden
+   838→                    />
+   839→                    {RUNWAY_TIER_STYLES[k].label}
+   840→                  </span>
+   841→                )
+   842→              )}
+   843→            </div>
+   844→          </div>
+   845→        )}
+   846→
+   847→        <div className="w-full max-w-sm">
+   848→          <div className="mb-1.5 flex items-center justify-between text-[11px] text-muted-foreground">
+   849→            <span>OR reserve {fmtAcres(Math.round(stats.orNetBuildable))}</span>
+   850→            <span>WA reserve {fmtAcres(Math.round(stats.waNetBuildable))}</span>
+   851→          </div>
+   852→          <div className="flex h-2.5 overflow-hidden rounded-full border bg-muted">
+   853→            <div
+   854→              className="bg-amber-500/80"
+   855→              style={{ width: `${orShare}%` }}
+   856→              title="Oregon-side net buildable acres"
+   857→            />
+   858→            <div
+   859→              className="bg-teal-500/80"
+   860→              style={{ width: `${100 - orShare}%` }}
+   861→              title="Washington-side net buildable acres"
+   862→            />
+   863→          </div>
+   864→        </div>
+   865→      </div>
+   866→    </div>
+   867→  );
+   868→}
+   869→

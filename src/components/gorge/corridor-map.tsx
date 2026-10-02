@@ -14,6 +14,7 @@ import {
   runwayTier,
   runwayYears,
   type CorridorStats,
+  type StateCode,
   type Submarket,
 } from "@/lib/gorge";
 import type { NavigateFn } from "./gorge-app";
@@ -80,6 +81,67 @@ const LABEL_POS: Record<string, { dx: number; dy: number; anchor: "start" | "end
 
 const RIVER_PATH =
   "M 12 232 C 150 192, 250 272, 390 232 C 520 194, 630 272, 760 232 C 870 198, 940 268, 990 230";
+
+/* ------------------------------------------------------------------ */
+/* Per-state exhaustion ledger (reserve tile) + milestone narrator.    */
+/* ------------------------------------------------------------------ */
+
+/** One chip in a state's exhaustion sequence. Markets that share a
+    depletion year (2035 ×2, 2036 ×2, 2037 ×2 in the live data) merge
+    into ONE chip so the sequence reads as a single event per year —
+    never two overlapping dots fighting for space. */
+type ExhaustionChip = {
+  year: number;
+  /** Merged market names, " + "-joined. */
+  label: string;
+  /** depletionYear <= timelineYear — the chip reads as "consumed". */
+  spent: boolean;
+};
+
+/** One ledger row: a state's chips in depletion-year order + tally. */
+type ExhaustionRow = {
+  state: StateCode;
+  chips: ExhaustionChip[];
+  spentCount: number;
+  total: number;
+};
+
+/** Compact chip label — the same shortening the map dots use, so
+    "N. Bonneville" never overflows a 10.5px chip. */
+function chipName(s: Submarket): string {
+  return s.slug === "north-bonneville" ? "N. Bonneville" : s.name;
+}
+
+/** Natural-English list for the live region: "Mosier", "Lyle and
+    Bingen", "Cascade Locks, Hood River, and …" (Oxford comma at 3+). */
+function joinNames(names: string[]): string {
+  if (names.length <= 1) return names[0] ?? "";
+  if (names.length === 2) return `${names[0]} and ${names[1]}`;
+  return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
+}
+
+/** State tints for the ledger, keyed to the split bar directly above it
+    (OR slate / WA emerald) so the two read as one system: `badge` tints
+    the tiny state tag, `chipSpent` fills a consumed chip, `countDone`
+    paints the fully-spent tally at full opacity. */
+const LEDGER_TINT: Record<
+  StateCode,
+  { badge: string; chipSpent: string; countDone: string }
+> = {
+  OR: {
+    badge: "bg-slate-600/10 text-slate-600 dark:bg-slate-400/15 dark:text-slate-300",
+    chipSpent:
+      "bg-slate-600/10 text-slate-700 dark:bg-slate-400/15 dark:text-slate-300",
+    countDone: "font-semibold text-slate-700 dark:text-slate-200",
+  },
+  WA: {
+    badge:
+      "bg-emerald-600/10 text-emerald-600 dark:bg-emerald-400/15 dark:text-emerald-400",
+    chipSpent:
+      "bg-emerald-600/10 text-emerald-700 dark:bg-emerald-400/15 dark:text-emerald-300",
+    countDone: "font-semibold text-emerald-700 dark:text-emerald-300",
+  },
+};
 
 export function CorridorMap({
   submarkets,
@@ -218,6 +280,93 @@ export function CorridorMap({
     () => submarkets.filter((s) => timelineYear >= s.depletionYear).length,
     [submarkets, timelineYear]
   );
+
+  /* Per-state exhaustion sequence — one row per state, chips ordered by
+     depletion year, same-year markets merged into one chip. Everything
+     derives from the `submarkets` prop (never the published table), so a
+     data refresh flows through automatically. Names inside a chip sort by
+     mapX — west → east map reading order, name as tiebreaker — which is
+     deterministic no matter how the server orders the prop. */
+  const exhaustionLedger = useMemo<ExhaustionRow[]>(() => {
+    const buildRow = (state: StateCode): ExhaustionRow => {
+      const byYear = new Map<number, Submarket[]>();
+      let spentInState = 0;
+      let total = 0;
+      for (const s of submarkets) {
+        if (s.state !== state) continue;
+        total += 1;
+        if (timelineYear >= s.depletionYear) spentInState += 1;
+        const group = byYear.get(s.depletionYear);
+        if (group) group.push(s);
+        else byYear.set(s.depletionYear, [s]);
+      }
+      const chips: ExhaustionChip[] = [...byYear.entries()]
+        .sort(([yA], [yB]) => yA - yB)
+        .map(([year, group]) => ({
+          year,
+          label: group
+            .slice()
+            .sort((a, b) => a.mapX - b.mapX || a.name.localeCompare(b.name))
+            .map(chipName)
+            .join(" + "),
+          spent: timelineYear >= year,
+        }));
+      return { state, chips, spentCount: spentInState, total };
+    };
+    return [buildRow("OR"), buildRow("WA")];
+  }, [submarkets, timelineYear]);
+
+  /* ---------------- Aria-live exhaustion milestones ----------------
+     A visually-hidden polite live region narrates what the visual sweep
+     makes obvious: which markets just crossed raw-land exhaustion and
+     how many of the corridor are spent. It fires for the autoplay sweep
+     AND manual scrubs alike — reduced-motion users (autoplay suppressed)
+     still hear it when they drive the slider by hand. Announcements are
+     written straight into the live-region DOM node — the assistive-tech
+     equivalent of an external system — instead of through state, so each
+     year change stays a single render with no cascade. */
+  const liveRegionRef = useRef<HTMLDivElement | null>(null);
+  // Last year announced — dedupes the play loop's repeated same-year
+  // commits and slider jitter, without silencing a deliberate revisit
+  // of a milestone year.
+  const lastAnnouncedYearRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const node = liveRegionRef.current;
+    if (!node) return;
+    // Baseline 2026 (the initial mount included): nothing has happened
+    // yet, so no announcement — and clear the region so the next sweep
+    // starts from clean silence rather than a stale message.
+    if (timelineYear === T0) {
+      lastAnnouncedYearRef.current = null;
+      node.textContent = "";
+      return;
+    }
+    if (lastAnnouncedYearRef.current === timelineYear) return;
+
+    // End of the reel: the closing bell, once per arrival at build-out
+    // (the ref guard keeps a jittering slider from re-ringing it).
+    if (timelineYear >= T1) {
+      node.textContent = `All ${submarkets.length} corridor markets are past raw-land exhaustion.`;
+      lastAnnouncedYearRef.current = timelineYear;
+      return;
+    }
+
+    // Ordinary years stay quiet — only a year that actually consumes a
+    // market gets announced, names in map reading order (west → east).
+    const crossing = submarkets
+      .filter((s) => s.depletionYear === timelineYear)
+      .sort((a, b) => a.mapX - b.mapX || a.name.localeCompare(b.name))
+      .map(chipName);
+    if (crossing.length === 0) return;
+    const spent = submarkets.filter(
+      (s) => timelineYear >= s.depletionYear,
+    ).length;
+    node.textContent = `${joinNames(crossing)} ${
+      crossing.length === 1 ? "crosses" : "cross"
+    } raw-land exhaustion. ${spent} of ${submarkets.length} markets spent.`;
+    lastAnnouncedYearRef.current = timelineYear;
+  }, [timelineYear, submarkets]);
 
   /* Year-synced KPI readouts — every figure is recomputed from the
      submarket data at the scrub year (never hard-coded). */
@@ -632,6 +781,75 @@ export function CorridorMap({
             <span className="font-medium text-emerald-600 dark:text-emerald-400">WA</span>{" "}
             {fmtAcres(kpis.liveReserveWA)}
           </p>
+
+          {/* Per-state exhaustion ledger — the split bar + caption above
+              show HOW MUCH land each state still holds; this shows the
+              ORDER it runs out in. One row per state: chips march left →
+              right by depletion year, same-year markets merge into a single
+              chip, spent chips fill with the state's tint (consumed) while
+              future chips stay hollow (pending). Purely presentational —
+              the KPI caption and the milestone live region carry the
+              semantics, so the glyphs are hidden from assistive tech and
+              each row exposes just its spent tally as the label. */}
+          <div
+            role="list"
+            aria-label="Exhaustion order by state"
+            className="mt-2.5 min-w-0 space-y-1"
+          >
+            {exhaustionLedger.map((row) =>
+              row.total === 0 ? null : (
+                <div
+                  key={row.state}
+                  role="listitem"
+                  className="min-w-0"
+                  aria-label={`${
+                    row.state === "OR" ? "Oregon" : "Washington"
+                  }: ${row.spentCount} of ${row.total} markets spent`}
+                >
+                  <div
+                    aria-hidden
+                    className="flex min-w-0 flex-wrap items-center gap-1"
+                  >
+                    {/* State badge — tinted to match the split bar so the
+                        row and the bar above read as one system. */}
+                    <span
+                      className={cn(
+                        "inline-flex h-4 shrink-0 items-center rounded-full px-1.5 text-[9px] font-bold tracking-wider",
+                        LEDGER_TINT[row.state].badge
+                      )}
+                    >
+                      {row.state}
+                    </span>
+                    {row.chips.map((chip) => (
+                      <span
+                        key={chip.year}
+                        className={cn(
+                          "inline-flex h-5 items-center whitespace-nowrap rounded-full px-1.5 text-[10.5px] font-medium transition-colors",
+                          chip.spent
+                            ? LEDGER_TINT[row.state].chipSpent
+                            : "border border-zinc-300 text-muted-foreground dark:border-zinc-600"
+                        )}
+                      >
+                        {`${chip.label} '${String(chip.year % 100).padStart(2, "0")}`}
+                      </span>
+                    ))}
+                    {/* Trailing tally — muted until the state is fully
+                        spent, then the state's tint at full opacity. */}
+                    <span
+                      className={cn(
+                        "whitespace-nowrap text-[10.5px] tabular-nums transition-colors",
+                        row.spentCount === row.total
+                          ? LEDGER_TINT[row.state].countDone
+                          : "text-muted-foreground"
+                      )}
+                    >
+                      {row.spentCount} of {row.total} spent
+                    </span>
+                  </div>
+                </div>
+              )
+            )}
+          </div>
         </div>
 
         <div className="rounded-lg border bg-muted/30 p-3">
@@ -778,6 +996,17 @@ export function CorridorMap({
           <span>2046 · build-out</span>
         </div>
       </div>
+
+      {/* Milestone narrator — visually hidden, polite + atomic: announces
+          each raw-land exhaustion crossing as the year sweeps or scrubs
+          past it, plus the final all-spent bell at 2046. Sits with the
+          timeline it narrates; the effect writes into it directly. */}
+      <div
+        ref={liveRegionRef}
+        className="sr-only"
+        aria-live="polite"
+        aria-atomic="true"
+      />
 
       {/* Legend + OR/WA split */}
       <div className="mt-4 flex flex-col gap-4 border-t pt-4 lg:flex-row lg:items-center lg:justify-between">

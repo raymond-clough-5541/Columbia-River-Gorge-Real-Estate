@@ -178,6 +178,7 @@ export function GorgeApp({ submarkets, listings, stats }: GorgeAppProps) {
         onOpenChange={setPaletteOpen}
         navigate={navigate}
         submarkets={submarkets}
+        listings={listings}
         onOpenShortcuts={() => setShortcutsOpen(true)}
       />
       <main className="flex-1">
