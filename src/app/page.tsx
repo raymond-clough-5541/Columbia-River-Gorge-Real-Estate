@@ -3,6 +3,7 @@ import { GorgeApp } from "@/components/gorge/gorge-app";
 import type {
   CorridorStats,
   PropertyListing,
+  PropertyType,
   StateCode,
   JurisdictionType,
   Submarket,
@@ -32,6 +33,7 @@ export default async function Page() {
           regulatoryFramework: true,
           projectedCagr: true,
           depletionYear: true,
+          baselinePrice2026: true,
         },
       },
     },
@@ -46,6 +48,7 @@ export default async function Page() {
 
   const listings: PropertyListing[] = listingRows.map((l) => ({
     ...l,
+    propertyType: l.propertyType as PropertyType,
     createdAt: l.createdAt.toISOString(),
     submarket: l.submarket
       ? { ...l.submarket, state: l.submarket.state as StateCode }

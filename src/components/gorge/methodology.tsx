@@ -99,7 +99,10 @@ function MethodologyBody() {
         <p>
           Market rent blends by product type: $1.35/sqft/mo single-family
           (tourism-adjacent premium), $1.05/sqft infill multi-family,
-          $1.10/sqft luxury estates — which additionally stack an
+          $1.10/sqft luxury estates — each base rate is then indexed by the
+          micro-market&apos;s price tier (baseline ÷ $450k corridor anchor,
+          clamped to −15%…+25%), so the same floor plan pencils richer in
+          Hood River than in Wishram. Luxury estates additionally stack an
           agricultural ground-lease at ≈$150/acre/yr on deed ground above
           2 acres. Net operating income applies a{" "}
           {(RENTAL_RESERVE_RATE * 100).toFixed(0)}% reserve for vacancy,
@@ -108,7 +111,19 @@ function MethodologyBody() {
         </p>
       </Section>
 
-      <Section title="4 · Comparable matching">
+      <Section title="4 · Watchlist comparison sheet">
+        <p>
+          Starred listings are underwritten on a standard sheet — 20% down
+          at 6.5% over 30 years (land paper: 35% at 8.5%) — with the base
+          rent posture and the 8% operating reserve. Emerald highlights the
+          best-in-class value per metric row (ties suppress the highlight);
+          rose marks negative cash-flow family rows. The income pick and the
+          appreciation pick are computed independently, and diverge whenever
+          the best cash-flow listing is not the strongest compounding market.
+        </p>
+      </Section>
+
+      <Section title="5 · Comparable matching">
         <p>
           Submarket peers are ranked by normalized distance across four
           structural axes, weighted 45% appreciation rate, 25% baseline
@@ -118,7 +133,7 @@ function MethodologyBody() {
         </p>
       </Section>
 
-      <Section title="5 · Data provenance & limitations">
+      <Section title="6 · Data provenance & limitations">
         <p>
           Land-inventory figures (footprint, gross vacant, net buildable)
           are illustrative bands compiled from public CRGNSA land-use

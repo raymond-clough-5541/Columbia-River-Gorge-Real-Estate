@@ -16,6 +16,7 @@ import {
   ArrowLeft,
   ArrowRight,
   Building2,
+  Download,
   Droplets,
   Flame,
   LandPlot,
@@ -26,6 +27,8 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { downloadCsv, timestampSuffix, toCsv } from "@/lib/csv";
+import { useToast } from "@/hooks/use-toast";
 import {
   fmtAcres,
   fmtCurrency,
@@ -98,6 +101,7 @@ export function SubmarketDetailView({
   navigate: NavigateFn;
 }) {
   const [detailId, setDetailId] = useState<string | null>(null);
+  const { toast } = useToast();
 
   const market = submarkets.find((s) => s.slug === slug);
 
@@ -399,17 +403,66 @@ export function SubmarketDetailView({
 
       {/* Comparable micro-markets — structural peers for cross-shopping */}
       <section className="mt-10">
-        <div className="mb-4">
-          <MicroLabel>Comparable Micro-Markets</MicroLabel>
-          <h2 className="mt-1.5 text-xl font-semibold tracking-tight sm:text-2xl">
-            Structural peers across the corridor
-          </h2>
-          <p className="mt-1.5 max-w-2xl text-[13.5px] leading-relaxed text-muted-foreground">
-            Ranked by proximity on the four structural axes that drive this
-            ledger — appreciation rate (45%), baseline price (25%), land
-            supply (15%), and depletion runway (15%). Deltas are shown
-            against {market.name}.
-          </p>
+        <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+          <div className="min-w-0">
+            <MicroLabel>Comparable Micro-Markets</MicroLabel>
+            <h2 className="mt-1.5 text-xl font-semibold tracking-tight sm:text-2xl">
+              Structural peers across the corridor
+            </h2>
+            <p className="mt-1.5 max-w-2xl text-[13.5px] leading-relaxed text-muted-foreground">
+              Ranked by proximity on the four structural axes that drive this
+              ledger — appreciation rate (45%), baseline price (25%), land
+              supply (15%), and depletion runway (15%). Deltas are shown
+              against {market.name}.
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 shrink-0 gap-1.5 text-[12.5px]"
+            onClick={() => {
+              const peers = findComparableMarkets(market, submarkets, 3);
+              const headers = [
+                "Rank",
+                "Market",
+                "State",
+                "County",
+                "Jurisdiction",
+                "Baseline 2026 ($)",
+                "20-yr CAGR (%)",
+                `CAGR vs ${market.name} (pp)`,
+                `Baseline vs ${market.name} ($)`,
+                `Net buildable (ac mid)`,
+                `Buildable vs ${market.name} (ac)`,
+                `Runway vs ${market.name} (yr)`,
+              ];
+              const rows = peers.map((peer, i) => [
+                i + 1,
+                peer.name,
+                peer.state,
+                peer.county,
+                peer.jurisdictionType,
+                peer.baselinePrice2026,
+                peer.projectedCagr,
+                +(peer.projectedCagr - market.projectedCagr).toFixed(1),
+                peer.baselinePrice2026 - market.baselinePrice2026,
+                netBuildableMid(peer),
+                Math.round(netBuildableMid(peer) - netBuildableMid(market)),
+                runwayYears(peer.depletionYear) - runwayYears(market.depletionYear),
+              ]);
+              downloadCsv(
+                `comparables-${market.slug}-${timestampSuffix()}`,
+                toCsv(headers, rows)
+              );
+              toast({
+                title: "Comparables exported",
+                description: `${peers.length} structural peers vs ${market.name} → CSV.`,
+              });
+            }}
+          >
+            <Download className="h-3.5 w-3.5" aria-hidden />
+            Export CSV
+          </Button>
         </div>
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {findComparableMarkets(market, submarkets, 3).map((peer, i) => {

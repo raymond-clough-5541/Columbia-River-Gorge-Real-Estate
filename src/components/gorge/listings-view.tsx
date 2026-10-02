@@ -45,6 +45,7 @@ import {
   StateBadge,
 } from "./shared";
 import { ListingDialog, getGalleryImages } from "./listing-dialog";
+import { CompareTrigger } from "./compare-sheet";
 
 const TYPE_ICONS: Record<string, typeof MapIcon> = {
   "Single-Family": Building2,
@@ -475,8 +476,8 @@ export function ListingsView({
           </div>
         </div>
 
-        <div className="mt-3 flex items-center justify-between gap-3 border-t pt-3">
-          <p className="flex items-center gap-3 text-[13px] text-muted-foreground tabular-nums">
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-t pt-3">
+          <p className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 text-[13px] text-muted-foreground tabular-nums">
             {loading ? (
               <span className="inline-flex items-center gap-2">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
@@ -512,6 +513,10 @@ export function ListingsView({
                     {watchlist.length}
                   </span>
                 </button>
+                <CompareTrigger
+                  listings={listings}
+                  onOpenListing={(l) => setDetailId(l.id)}
+                />
               </>
             )}
           </p>

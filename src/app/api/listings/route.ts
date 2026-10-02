@@ -66,6 +66,7 @@ export async function GET(req: NextRequest) {
             regulatoryFramework: true,
             projectedCagr: true,
             depletionYear: true,
+            baselinePrice2026: true,
           },
         },
       },

@@ -11,6 +11,8 @@ import {
   Droplets,
   ExternalLink,
   Flame,
+  Pin,
+  PinOff,
   Recycle,
   ShieldAlert,
 } from "lucide-react";
@@ -102,6 +104,9 @@ const DEFAULT_VISIBLE: Record<ColumnKey, boolean> = {
   depletion: true,
 };
 
+/** Row-pinning cap — three jurisdictions above the fold. */
+const MAX_PINS = 3;
+
 export function MatrixView({
   submarkets,
   navigate,
@@ -118,6 +123,24 @@ export function MatrixView({
   const [detailSlug, setDetailSlug] = useState<string | null>(null);
   const [visibleCols, setVisibleCols] =
     useState<Record<ColumnKey, boolean>>(DEFAULT_VISIBLE);
+  const [pins, setPins] = useState<string[]>([]);
+
+  const togglePin = (slug: string) => {
+    // Event-time logic only — never inside a state updater (that would
+    // update the Toaster while MatrixView renders → React warning).
+    if (pins.includes(slug)) {
+      setPins((prev) => prev.filter((s) => s !== slug));
+      return;
+    }
+    if (pins.length >= MAX_PINS) {
+      toast({
+        title: "Pin limit reached",
+        description: `Up to ${MAX_PINS} jurisdictions can stay pinned — unpin one first.`,
+      });
+      return;
+    }
+    setPins((prev) => (prev.includes(slug) ? prev : [...prev, slug]));
+  };
 
   const visibleCount = useMemo(
     () => ALL_COLUMNS.filter((c) => visibleCols[c]).length,
@@ -171,6 +194,15 @@ export function MatrixView({
 
   const detail = submarkets.find((s) => s.slug === detailSlug) ?? null;
 
+  /** Pinned jurisdictions float above the fold, in pin order. */
+  const orderedRows = useMemo(() => {
+    const pinnedRows = pins
+      .map((slug) => rows.find((r) => r.slug === slug))
+      .filter((r): r is Submarket => Boolean(r));
+    const rest = rows.filter((r) => !pins.includes(r.slug));
+    return [...pinnedRows, ...rest];
+  }, [rows, pins]);
+
   const { toast } = useToast();
 
   const exportCsv = () => {
@@ -198,7 +230,7 @@ export function MatrixView({
       "Wastewater System",
       "Primary Constraints & WUI Risk",
     ];
-    const data: CsvCell[][] = rows.map((s) => [
+    const data: CsvCell[][] = orderedRows.map((s) => [
       s.name,
       s.state,
       s.county,
@@ -333,6 +365,18 @@ export function MatrixView({
         </div>
 
         <div className="ml-auto flex items-center gap-6 text-[13px] tabular-nums">
+          {pins.length > 0 ? (
+            <button
+              type="button"
+              onClick={() => setPins([])}
+              title="Unpin all jurisdictions"
+              className="inline-flex h-7 items-center gap-1.5 rounded-md border border-amber-400/60 bg-amber-400/10 px-2.5 text-[12px] font-medium text-amber-700 transition-all hover:bg-amber-400/20 active:scale-[0.97] dark:text-amber-300"
+            >
+              <Pin className="h-3 w-3" fill="currentColor" aria-hidden />
+              {pins.length}/{MAX_PINS} pinned
+              <PinOff className="ml-1 h-3 w-3" aria-hidden />
+            </button>
+          ) : null}
           <span className="text-muted-foreground">
             Showing <span className="font-semibold text-foreground">{rows.length}</span> of{" "}
             {submarkets.length}
@@ -415,23 +459,63 @@ export function MatrixView({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {rows.map((s) => {
+            {orderedRows.map((s) => {
               const netMid = (s.netBuildableAcresMin + s.netBuildableAcresMax) / 2;
               const isActive = detailSlug === s.slug;
+              const pinned = pins.includes(s.slug);
+              const pinRank = pins.indexOf(s.slug) + 1;
               return (
                 <TableRow
                   key={s.slug}
                   onClick={() => setDetailSlug(s.slug)}
                   className={cn(
                     "cursor-pointer transition-colors hover:bg-muted/40",
-                    isActive && "bg-emerald-500/[0.06]"
+                    isActive && "bg-emerald-500/[0.06]",
+                    pinned &&
+                      "border-l-[3px] border-l-amber-400/80 bg-amber-500/[0.05]"
                   )}
                   aria-label={`Open infrastructure dossier for ${s.name}, ${s.state}`}
                 >
                   <TableCell className="py-3.5">
                     <div className="flex items-center gap-2">
+                      {pinned ? (
+                        <span
+                          className="inline-flex h-4 min-w-4 items-center justify-center rounded-[3px] bg-amber-400/25 px-1 text-[9.5px] font-bold tabular-nums text-amber-700 dark:text-amber-300"
+                          title={`Pinned #${pinRank}`}
+                        >
+                          {pinRank}
+                        </span>
+                      ) : null}
                       <span className="text-[14px] font-semibold">{s.name}</span>
                       <StateBadge state={s.state} />
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          togglePin(s.slug);
+                        }}
+                        aria-pressed={pinned}
+                        aria-label={pinned ? `Unpin ${s.name}` : `Pin ${s.name} to the top of the matrix`}
+                        title={
+                          pinned
+                            ? `Pinned #${pinRank} — click to unpin`
+                            : pins.length >= MAX_PINS
+                              ? "Pin limit reached (3)"
+                              : "Pin to the top of the matrix"
+                        }
+                        className={cn(
+                          "ml-auto inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-all active:scale-90",
+                          pinned
+                            ? "bg-amber-400/20 text-amber-600 hover:bg-amber-400/30 dark:text-amber-400"
+                            : "text-muted-foreground/50 hover:bg-muted hover:text-amber-600 dark:hover:text-amber-400"
+                        )}
+                      >
+                        <Pin
+                          className="h-3.5 w-3.5"
+                          fill={pinned ? "currentColor" : "none"}
+                          aria-hidden
+                        />
+                      </button>
                     </div>
                     <p className="mt-0.5 text-[12px] text-muted-foreground">{s.county}</p>
                   </TableCell>

@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { Flame, TrendingUp } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Flame, Pause, Play, RotateCcw, TrendingUp } from "lucide-react";
+import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
 import {
   RUNWAY_TIER_STYLES,
@@ -39,13 +40,20 @@ function tierOf(cagr: number): string {
 /** Lens of the map: appreciation tiers vs depletion-runway heat. */
 type MapMode = "cagr" | "runway";
 
+/** Timeline bounds — the 20-year analysis horizon. */
+const T0 = 2026;
+const T1 = 2046;
+/** Wall-clock pace of the play animation: ms per projected year (≈8s sweep). */
+const PLAY_MS_PER_YEAR = 400;
+
 const MODES: { id: MapMode; label: string; icon: typeof TrendingUp; hint: string }[] = [
   { id: "cagr", label: "Appreciation", icon: TrendingUp, hint: "Dot color = 20-yr CAGR tier" },
   { id: "runway", label: "Land runway", icon: Flame, hint: "Dot color = years of raw land left" },
 ];
 
-/** Fill color for a market under the active lens. */
-function dotFill(s: Submarket, mode: MapMode): string {
+/** Fill color for a market under the active lens (dark zinc once spent). */
+function dotFill(s: Submarket, mode: MapMode, spent: boolean): string {
+  if (spent) return "#71717a";
   if (mode === "cagr") return TIER_FILL[tierOf(s.projectedCagr)];
   return RUNWAY_TIER_STYLES[runwayTier(runwayYears(s.depletionYear))].color;
 }
@@ -80,6 +88,53 @@ export function CorridorMap({
   const [hovered, setHovered] = useState<string | null>(null);
   const [mode, setMode] = useState<MapMode>("cagr");
 
+  /* ---------------- Depletion-timeline scrubber ---------------- */
+  const [timelineYear, setTimelineYear] = useState(T0);
+  const [playing, setPlaying] = useState(false);
+  // Mirror the year in a ref so the rAF loop can capture its start value
+  // without re-arming on every frame (exhaustive-deps stays clean).
+  const yearRef = useRef(timelineYear);
+  useEffect(() => {
+    yearRef.current = timelineYear;
+  }, [timelineYear]);
+
+  useEffect(() => {
+    if (!playing) return;
+    const startedAt = performance.now();
+    const from = yearRef.current;
+    let raf = 0;
+    const tick = (now: number) => {
+      const next = Math.min(T1, Math.round(from + (now - startedAt) / PLAY_MS_PER_YEAR));
+      setTimelineYear(next);
+      if (next >= T1) {
+        setPlaying(false);
+        return;
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [playing]);
+
+  const scrub = (year: number) => {
+    setPlaying(false);
+    setTimelineYear(year);
+  };
+  const togglePlay = () => {
+    if (playing) {
+      setPlaying(false);
+      return;
+    }
+    // At the end of the reel, play restarts from the 2026 baseline.
+    if (yearRef.current >= T1) setTimelineYear(T0);
+    setPlaying(true);
+  };
+
+  const spentCount = useMemo(
+    () => submarkets.filter((s) => timelineYear >= s.depletionYear).length,
+    [submarkets, timelineYear]
+  );
+
   const dots = useMemo(
     () =>
       submarkets.map((s) => {
@@ -108,6 +163,14 @@ export function CorridorMap({
             {mode === "cagr"
               ? "color = 20-yr CAGR tier"
               : "color = raw-land runway remaining"}
+            {timelineYear > T0 ? (
+              <>
+                {" · as of "}
+                <span className="font-semibold tabular-nums text-foreground">
+                  {timelineYear}
+                </span>
+              </>
+            ) : null}
           </p>
         </div>
         {/* Lens toggle — segmented control */}
@@ -200,7 +263,8 @@ export function CorridorMap({
             {/* Market dots */}
             {dots.map(({ s, px, py, r, label }) => {
               const active = hovered === s.slug;
-              const fill = dotFill(s, mode);
+              const spent = timelineYear >= s.depletionYear;
+              const fill = dotFill(s, mode, spent);
               const runway = runwayYears(s.depletionYear);
               return (
                 <g
@@ -216,10 +280,20 @@ export function CorridorMap({
                   {active ? (
                     <circle cx={px} cy={py} r={r + 9} fill={fill} opacity="0.22" />
                   ) : null}
+                  {spent ? (
+                    <circle
+                      cx={px} cy={py} r={r + 5.5}
+                      fill="none"
+                      stroke="#71717a"
+                      strokeWidth="1.5"
+                      strokeDasharray="3 4"
+                      opacity={active ? 0.8 : 0.55}
+                    />
+                  ) : null}
                   <circle
                     cx={px} cy={py} r={r}
                     fill={fill}
-                    opacity={active ? 1 : 0.88}
+                    opacity={spent ? (active ? 0.7 : 0.42) : active ? 1 : 0.88}
                     className="stroke-white dark:stroke-zinc-950"
                     strokeWidth="2.5"
                   />
@@ -231,7 +305,8 @@ export function CorridorMap({
                     className={cn(
                       active
                         ? "fill-zinc-900 dark:fill-zinc-50"
-                        : "fill-zinc-500 dark:fill-zinc-300"
+                        : "fill-zinc-500 dark:fill-zinc-300",
+                      spent && !active && "fill-zinc-400/80 dark:fill-zinc-500"
                     )}
                   >
                     {s.slug === "north-bonneville" ? "N. Bonneville" : s.name}
@@ -240,11 +315,18 @@ export function CorridorMap({
                     x={px + label.dx} y={py + label.dy + 16}
                     textAnchor={label.anchor}
                     fontSize="12.5"
-                    className="fill-zinc-400 dark:fill-zinc-500 tabular-nums"
+                    className={cn(
+                      "tabular-nums",
+                      spent
+                        ? "fill-zinc-400/90 dark:fill-zinc-500"
+                        : "fill-zinc-400 dark:fill-zinc-500"
+                    )}
                   >
-                    {mode === "cagr"
-                      ? `${s.state} · ${fmtPct(s.projectedCagr)}`
-                      : `${s.state} · ${runway} yrs land`}
+                    {spent
+                      ? `${s.state} · exhausted ${s.depletionYear}`
+                      : mode === "cagr"
+                        ? `${s.state} · ${fmtPct(s.projectedCagr)}`
+                        : `${s.state} · ${runway} yrs land`}
                   </text>
                 </g>
               );
@@ -303,12 +385,132 @@ export function CorridorMap({
                   <span className="text-muted-foreground">Depletion</span>
                   <span className="font-medium">{hoveredDot.s.depletionYear}</span>
                 </div>
+                {timelineYear > T0 ? (
+                  <div className="flex justify-between gap-3">
+                    <span className="text-muted-foreground">As of {timelineYear}</span>
+                    <span
+                      className={cn(
+                        "font-medium",
+                        timelineYear >= hoveredDot.s.depletionYear
+                          ? "text-rose-600 dark:text-rose-400"
+                          : "text-emerald-600 dark:text-emerald-400"
+                      )}
+                    >
+                      {timelineYear >= hoveredDot.s.depletionYear
+                        ? `exhausted ${timelineYear - hoveredDot.s.depletionYear} yr${
+                            timelineYear - hoveredDot.s.depletionYear === 1 ? "" : "s"
+                          } prior`
+                        : `${hoveredDot.s.depletionYear - timelineYear} yrs of runway left`}
+                    </span>
+                  </div>
+                ) : null}
               </div>
               <p className="mt-2 border-t pt-1.5 text-[11px] text-muted-foreground">
                 Click to open profile →
               </p>
             </div>
           ) : null}
+        </div>
+      </div>
+
+      {/* Depletion-timeline scrubber — watch the corridor go dark */}
+      <div className="mt-4 rounded-xl border bg-muted/30 p-3.5 sm:p-4">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+          <div className="flex items-center gap-2.5">
+            <button
+              type="button"
+              onClick={togglePlay}
+              aria-label={playing ? "Pause the depletion timeline" : "Play the depletion timeline"}
+              title={playing ? "Pause" : "Play 2026 → 2046"}
+              className={cn(
+                "flex h-8 w-8 items-center justify-center rounded-full border transition-all active:scale-90",
+                playing
+                  ? "bg-zinc-900 text-white dark:bg-emerald-500 dark:text-zinc-950"
+                  : "border-zinc-300 text-foreground hover:border-emerald-500/60 hover:text-emerald-600 dark:border-zinc-700 dark:hover:text-emerald-400"
+              )}
+            >
+              {playing ? (
+                <Pause className="h-3.5 w-3.5" aria-hidden />
+              ) : (
+                <Play className="ml-0.5 h-3.5 w-3.5" aria-hidden />
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => scrub(T0)}
+              disabled={timelineYear === T0 && !playing}
+              aria-label="Reset the timeline to 2026"
+              title="Reset to 2026"
+              className={cn(
+                "flex h-8 w-8 items-center justify-center rounded-full border transition-all active:scale-90",
+                timelineYear === T0
+                  ? "cursor-default text-muted-foreground/50"
+                  : "border-zinc-300 text-foreground hover:border-emerald-500/60 hover:text-emerald-600 dark:border-zinc-700 dark:hover:text-emerald-400"
+              )}
+            >
+              <RotateCcw className="h-3.5 w-3.5" aria-hidden />
+            </button>
+            <div>
+              <MicroLabel>Depletion Timeline</MicroLabel>
+              <p className="mt-0.5 text-[11px] text-muted-foreground tabular-nums">
+                2026 → 2046 · ticks mark each exhaustion year
+              </p>
+            </div>
+          </div>
+          <p className="text-[12.5px] text-muted-foreground tabular-nums">
+            As of{" "}
+            <span className="text-[15px] font-semibold text-foreground">
+              {timelineYear}
+            </span>
+            <span
+              className={cn(
+                "ml-2.5 rounded-md px-2 py-0.5 text-[11px] font-semibold",
+                spentCount > 0
+                  ? "bg-rose-500/15 text-rose-700 dark:text-rose-300"
+                  : "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+              )}
+            >
+              {spentCount} of {submarkets.length} past exhaustion
+            </span>
+          </p>
+        </div>
+
+        <div className="relative">
+          <Slider
+            value={[timelineYear]}
+            min={T0}
+            max={T1}
+            step={1}
+            onValueChange={(v) => scrub(v[0])}
+            aria-label="Scrub the depletion timeline year"
+          />
+          {/* Exhaustion-year tick marks, punched out of the track */}
+          {submarkets.map((s) => {
+            const pct = ((s.depletionYear - T0) / (T1 - T0)) * 100;
+            const passed = timelineYear >= s.depletionYear;
+            return (
+              <span
+                key={s.slug}
+                className="pointer-events-none absolute top-1/2 -translate-x-1/2 -translate-y-1/2"
+                style={{ left: `${pct}%` }}
+                title={`${s.name} exhausts ${s.depletionYear}`}
+              >
+                <span
+                  className={cn(
+                    "block h-2 w-2 rounded-full ring-[2.5px] ring-[#e4e4e7] dark:ring-[#27272a]",
+                    passed
+                      ? "bg-rose-500"
+                      : "bg-zinc-400 dark:bg-zinc-500"
+                  )}
+                  aria-hidden
+                />
+              </span>
+            );
+          })}
+        </div>
+        <div className="mt-1.5 flex justify-between text-[10.5px] font-medium text-muted-foreground tabular-nums">
+          <span>2026 · full inventories</span>
+          <span>2046 · build-out</span>
         </div>
       </div>
 

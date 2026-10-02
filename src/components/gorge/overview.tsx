@@ -13,7 +13,7 @@ import {
   type PropertyListing,
   type Submarket,
 } from "@/lib/gorge";
-import type { NavigateFn } from "./gorge-app";
+import type { NavigateFn, Route } from "./gorge-app";
 import {
   CountUp,
   MicroLabel,
@@ -25,6 +25,29 @@ import {
 import { CorridorMap } from "./corridor-map";
 import { FrameworkExplorer } from "./framework-explorer";
 import { ArbitrageSpotlight } from "./arbitrage-spotlight";
+
+/** Small drilldown chip rendered in a StatCard's action slot. */
+function DrilldownChip({
+  label,
+  onClick,
+}: {
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="group/chip inline-flex h-7 max-w-full items-center gap-1.5 truncate rounded-md border px-2.5 text-[12px] font-medium text-muted-foreground transition-all hover:border-emerald-500/50 hover:bg-emerald-500/10 hover:text-emerald-700 active:scale-[0.97] dark:hover:text-emerald-300"
+    >
+      <span className="truncate">{label}</span>
+      <ArrowRight
+        className="h-3.5 w-3.5 shrink-0 transition-transform group-hover/chip:translate-x-0.5"
+        aria-hidden
+      />
+    </button>
+  );
+}
 
 function Hero({ stats }: { stats: CorridorStats }) {
   return (
@@ -219,6 +242,29 @@ export function OverviewView({
 }) {
   const featured = listings.find((l) => l.featured) ?? null;
 
+  /* Drilldown targets for the KPI cards — computed, never hard-coded. */
+  const drill = useMemo(() => {
+    const byPrice = [...submarkets].sort(
+      (a, b) => a.baselinePrice2026 - b.baselinePrice2026
+    );
+    const medianMarket = byPrice[Math.floor(byPrice.length / 2)];
+    const byCagr = [...submarkets].sort(
+      (a, b) => b.projectedCagr - a.projectedCagr
+    );
+    const topCagr = byCagr[0];
+    const floorCagr = byCagr[byCagr.length - 1];
+    const byDepletion = [...submarkets].sort(
+      (a, b) => a.depletionYear - b.depletionYear
+    );
+    const firstGone = byDepletion[0];
+    const lastGone = byDepletion[byDepletion.length - 1];
+    return { medianMarket, topCagr, floorCagr, firstGone, lastGone };
+  }, [submarkets]);
+
+  /** Navigate into the projections workspace with a preset query. */
+  const goToProjections = (query: string) =>
+    navigate({ view: "projections", query });
+
   /* KPI sparkline series — 21 annual points, 2026–2046. */
   const SPARK_YEARS = 20;
   const sparkPoints = useMemo(() => {
@@ -284,6 +330,12 @@ export function OverviewView({
                 OR {fmtAcres(Math.round(stats.orNetBuildable))} · WA {fmtAcres(Math.round(stats.waNetBuildable))}
               </div>
             }
+            action={
+              <DrilldownChip
+                label="Audit the inventory →"
+                onClick={() => navigate({ view: "matrix" })}
+              />
+            }
           />
           <StatCard
             icon={TrendingUp}
@@ -307,6 +359,18 @@ export function OverviewView({
                 Wishram entry {fmtCurrency(305000, { compact: true })} → Hood River{" "}
                 {fmtCurrency(685000, { compact: true })}
               </div>
+            }
+            action={
+              <DrilldownChip
+                label={`Project ${drill.medianMarket.name} at the median →`}
+                onClick={() =>
+                  goToProjections(
+                    `m=${drill.medianMarket.slug}&pv=${
+                      Math.round(stats.regionalMedianPrice / 5000) * 5000
+                    }&r=${stats.averageCagr.toFixed(1)}&n=20&s=1`
+                  )
+                }
+              />
             }
           />
           <StatCard
@@ -333,6 +397,16 @@ export function OverviewView({
                 Top market: Hood River {fmtPct(5.8)} · floor: Wishram {fmtPct(4.3)}
               </div>
             }
+            action={
+              <DrilldownChip
+                label={`See the CAGR spread (${drill.topCagr.name} vs ${drill.floorCagr.name}) →`}
+                onClick={() =>
+                  goToProjections(
+                    `m=${drill.topCagr.slug},${drill.floorCagr.slug}&r=${stats.averageCagr.toFixed(1)}&s=1`
+                  )
+                }
+              />
+            }
           />
           <StatCard
             icon={Flame}
@@ -352,6 +426,16 @@ export function OverviewView({
                 Mosier exhausts first ({stats.earliestDepletion}); The Dalles &amp;
                 Dallesport last ({stats.latestDepletion})
               </div>
+            }
+            action={
+              <DrilldownChip
+                label={`Model the exhaustion (${drill.firstGone.name} → ${drill.lastGone.name}) →`}
+                onClick={() =>
+                  goToProjections(
+                    `m=${drill.firstGone.slug},${drill.lastGone.slug}&s=1&d=1`
+                  )
+                }
+              />
             }
           />
         </div>

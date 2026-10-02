@@ -298,6 +298,7 @@ export function StatCard({
   sub,
   footer,
   sparkline,
+  action,
   accent = "default",
   className,
 }: {
@@ -307,6 +308,8 @@ export function StatCard({
   sub?: ReactNode;
   footer?: ReactNode;
   sparkline?: ReactNode;
+  /** Optional drilldown affordance — a small chip button under the footer. */
+  action?: ReactNode;
   accent?: "default" | "emerald" | "amber" | "rose";
   className?: string;
 }) {
@@ -346,6 +349,9 @@ export function StatCard({
         <div className="mt-1 text-[13px] text-muted-foreground">{sub}</div>
       ) : null}
       {footer ? <div className="mt-3 border-t pt-3">{footer}</div> : null}
+      {action ? (
+        <div className="mt-3 flex min-h-7 items-center">{action}</div>
+      ) : null}
     </div>
   );
 }

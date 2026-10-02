@@ -22,7 +22,7 @@ import { KeyboardShortcuts } from "./shortcuts";
 export type Route =
   | { view: "overview" }
   | { view: "matrix" }
-  | { view: "projections" }
+  | { view: "projections"; query?: string }
   | { view: "listings" }
   | { view: "submarket"; slug: string };
 
@@ -35,7 +35,9 @@ export function routeToHash(route: Route): string {
     case "matrix":
       return "#/matrix";
     case "projections":
-      return "#/projections";
+      // An optional hash query (share links, KPI drilldown presets) rides
+      // along; parseHash strips it, the Projections view adopts it on mount.
+      return route.query ? `#/projections?${route.query}` : "#/projections";
     case "listings":
       return "#/listings";
     case "submarket":

@@ -495,9 +495,9 @@ export function ProjectionsView({ submarkets }: { submarkets: Submarket[] }) {
           <p className="flex min-w-0 items-center gap-2">
             <Link2 className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden />
             <span className="truncate">
-              Inputs restored from a{" "}
+              Inputs preset loaded from a{" "}
               <span className="font-semibold text-emerald-700 dark:text-emerald-300">
-                shared scenario link
+                scenario link
               </span>{" "}
               — {selectedMarkets.length} market
               {selectedMarkets.length === 1 ? "" : "s"} · {fmtCurrency(pv, { compact: true })} ·{" "}

@@ -51,6 +51,8 @@ export interface ListingSubmarketSummary {
   regulatoryFramework: string;
   projectedCagr: number;
   depletionYear: number;
+  /** 2026 median baseline — drives the per-market rent index. */
+  baselinePrice2026: number;
 }
 
 export interface PropertyListing {
@@ -322,36 +324,64 @@ export function findComparableMarkets(
 /* ------------------------------------------------------------------ */
 
 /**
+ * Rent index for a micro-market: baseline-price-tiered multiplier on the
+ * product-type base rate. Corridor median (~$450k) is the 1.00 anchor;
+ * premium markets (Hood River $685k) index up to +25%, entry markets
+ * (Wishram $305k) index down to −15%. Clamped so extremes stay honest.
+ */
+export function rentIndex(marketBaseline: number | null | undefined): number {
+  if (!marketBaseline || marketBaseline <= 0) return 1;
+  const raw = marketBaseline / 450_000;
+  return Math.min(1.25, Math.max(0.85, raw));
+}
+
+/**
  * Estimated market rent for a listing, before the investor's own
  * conservative/aggro haircut. Gorge-rate heuristics by product type:
  * single-family leases carry a tourism-adjacent premium, multi-family
  * pencils thinner, and farm estates stack an agricultural ground-lease
- * on the unimproved acreage.
+ * on the unimproved acreage. The per-sqft base is then scaled by the
+ * micro-market's price tier (see rentIndex) so a Hood River lease
+ * pencils richer than the same floor plan in Wishram.
  */
 export function estimateMarketRent(listing: {
   propertyType: PropertyType | string;
   squareFeet: number;
   acreage: number;
-}): { dwelling: number; agriculture: number; note: string } {
+  submarket?: { baselinePrice2026: number } | null;
+}): { dwelling: number; agriculture: number; note: string; perSqft: number } {
   const sqft = Math.max(0, listing.squareFeet);
   if (listing.propertyType === "Land Parcel" || sqft === 0) {
-    return { dwelling: 0, agriculture: 0, note: "unimproved land — no income until entitlement" };
+    return {
+      dwelling: 0,
+      agriculture: 0,
+      perSqft: 0,
+      note: "unimproved land — no income until entitlement",
+    };
   }
-  const perSqft =
+  const basePerSqft =
     listing.propertyType === "Infill Multi-Family"
       ? 1.05
       : listing.propertyType === "Luxury Agricultural/Farm Estate"
         ? 1.1
         : 1.35;
+  const idx = rentIndex(listing.submarket?.baselinePrice2026);
+  const perSqft = basePerSqft * idx;
   const dwelling = sqft * perSqft;
   const agriculture =
     listing.propertyType === "Luxury Agricultural/Farm Estate" && listing.acreage > 2
-      ? listing.acreage * 150 / 12 // pasture/vineyard ground-lease at ~$150/ac/yr
+      ? (listing.acreage * 150) / 12 // pasture/vineyard ground-lease at ~$150/ac/yr
       : 0;
+  const idxPct = Math.round(Math.abs(idx - 1) * 100);
+  const idxNote =
+    idxPct === 0
+      ? ""
+      : ` (market ${idx > 1 ? "+" : "−"}${idxPct}% ${idx > 1 ? "premium" : "discount"})`;
   return {
     dwelling: Math.round(dwelling),
     agriculture: Math.round(agriculture),
-    note: `${perSqft.toFixed(2)}/sqft/mo blend${agriculture > 0 ? " + ag ground-lease" : ""}`,
+    perSqft,
+    note: `$${perSqft.toFixed(2)}/sqft/mo${idxNote}${agriculture > 0 ? " + ag ground-lease" : ""}`,
   };
 }
 
