@@ -63,3 +63,4 @@ logs/
 # audit scratch output (reports belong in docs/audits/ — committed)
 .audit-out/
 __pycache__/
+tool-results/
