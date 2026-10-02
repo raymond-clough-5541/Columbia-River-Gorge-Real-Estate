@@ -6,6 +6,7 @@ import {
   Bath,
   BedDouble,
   Building2,
+  Camera,
   Grape,
   LandPlot,
   Loader2,
@@ -40,7 +41,7 @@ import {
   SectionHeader,
   StateBadge,
 } from "./shared";
-import { ListingDialog } from "./listing-dialog";
+import { ListingDialog, getGalleryImages } from "./listing-dialog";
 
 const TYPE_ICONS: Record<string, typeof MapIcon> = {
   "Single-Family": Building2,
@@ -70,6 +71,7 @@ function ListingCard({
 }) {
   const TypeIcon = TYPE_ICONS[listing.propertyType] ?? MapIcon;
   const isLand = listing.propertyType === "Land Parcel" || listing.squareFeet === 0;
+  const photoCount = getGalleryImages(listing).length;
   return (
     <button
       type="button"
@@ -105,6 +107,12 @@ function ListingCard({
           <TypeIcon className="h-3 w-3" aria-hidden />
           {listing.propertyType}
         </span>
+        {photoCount > 1 ? (
+          <span className="absolute bottom-2.5 right-2.5 inline-flex items-center gap-1 rounded-sm bg-zinc-950/70 px-2 py-1 text-[10px] font-semibold tabular-nums text-white backdrop-blur-sm">
+            <Camera className="h-3 w-3" aria-hidden />
+            {photoCount}
+          </span>
+        ) : null}
       </div>
 
       <div className="flex flex-1 flex-col p-4">

@@ -1,14 +1,8 @@
 "use client";
 
 import Image from "next/image";
-import {
-  ArrowRight,
-  Flame,
-  Layers,
-  LineChart,
-  Map,
-  TrendingUp,
-} from "lucide-react";
+import { ArrowRight, ChevronDown, Flame, Layers, LineChart, Map, TrendingUp } from "lucide-react";
+import { motion } from "framer-motion";
 import {
   fmtAcres,
   fmtCurrency,
@@ -19,6 +13,7 @@ import {
 } from "@/lib/gorge";
 import type { NavigateFn } from "./gorge-app";
 import {
+  CountUp,
   MicroLabel,
   SectionHeader,
   StatCard,
@@ -92,6 +87,20 @@ function Hero({ stats }: { stats: CorridorStats }) {
           ))}
         </dl>
       </div>
+
+      {/* Scroll cue */}
+      <motion.a
+        href="#corridor-metrics"
+        aria-label="Scroll to corridor metrics"
+        className="absolute bottom-4 left-1/2 hidden -translate-x-1/2 flex-col items-center gap-1 text-zinc-400 transition-colors hover:text-zinc-200 sm:flex"
+        animate={{ y: [0, 6, 0] }}
+        transition={{ duration: 2.2, repeat: Infinity, ease: "easeInOut" }}
+      >
+        <span className="text-[10px] font-semibold uppercase tracking-[0.28em]">
+          Scroll
+        </span>
+        <ChevronDown className="h-4 w-4" aria-hidden />
+      </motion.a>
     </section>
   );
 }
@@ -212,7 +221,11 @@ export function OverviewView({
       <Hero stats={stats} />
 
       {/* Macro KPIs */}
-      <section aria-label="Corridor key metrics" className="mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8">
+      <section
+        id="corridor-metrics"
+        aria-label="Corridor key metrics"
+        className="mx-auto w-full max-w-7xl scroll-mt-20 px-4 sm:px-6 lg:px-8"
+      >
         <SectionHeader
           eyebrow="Executive Overview"
           title="The corridor in four numbers"
@@ -222,7 +235,12 @@ export function OverviewView({
           <StatCard
             icon={Layers}
             label="Corridor buildable reserve"
-            value={fmtAcres(stats.totalNetBuildableMid)}
+            value={
+              <CountUp
+                target={stats.totalNetBuildableMid}
+                format={(v) => fmtAcres(Math.round(v))}
+              />
+            }
             sub={`band ${fmtAcres(stats.totalNetBuildableMin)} – ${fmtAcres(stats.totalNetBuildableMax)} · gross vacant ${fmtAcres(stats.totalGrossVacant)}`}
             footer={
               <div className="flex items-center gap-2 text-[12px] text-muted-foreground">
@@ -234,7 +252,12 @@ export function OverviewView({
           <StatCard
             icon={TrendingUp}
             label="Regional median price · 2026"
-            value={fmtCurrency(stats.regionalMedianPrice, { compact: true })}
+            value={
+              <CountUp
+                target={stats.regionalMedianPrice}
+                format={(v) => fmtCurrency(Math.round(v), { compact: true })}
+              />
+            }
             sub="11-jurisdiction median baseline, all product types"
             footer={
               <div className="text-[12px] text-muted-foreground">
@@ -246,7 +269,13 @@ export function OverviewView({
           <StatCard
             icon={LineChart}
             label="Average projected CAGR"
-            value={fmtPct(stats.averageCagr)}
+            value={
+              <CountUp
+                target={stats.averageCagr}
+                format={(v) => fmtPct(v)}
+                duration={1.3}
+              />
+            }
             sub="20-year horizon to 2046, corridor-wide mean"
             accent="emerald"
             footer={

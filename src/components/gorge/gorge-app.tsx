@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { AnimatePresence, motion } from "framer-motion";
+import { ArrowUp } from "lucide-react";
 import type { CorridorStats, PropertyListing, Submarket } from "@/lib/gorge";
 import { SiteHeader } from "./site-header";
 import { SiteFooter } from "./site-footer";
@@ -64,6 +65,44 @@ export interface GorgeAppProps {
   submarkets: Submarket[];
   listings: PropertyListing[];
   stats: CorridorStats;
+}
+
+/** Lint-safe scroll-position flag via useSyncExternalStore. */
+function useIsScrolledPast(threshold: number): boolean {
+  const subscribe = useCallback(
+    (cb: () => void) => {
+      window.addEventListener("scroll", cb, { passive: true });
+      return () => window.removeEventListener("scroll", cb);
+    },
+    []
+  );
+  return useSyncExternalStore(
+    subscribe,
+    () => window.scrollY > threshold,
+    () => false
+  );
+}
+
+function BackToTop() {
+  const show = useIsScrolledPast(700);
+  return (
+    <AnimatePresence>
+      {show ? (
+        <motion.button
+          type="button"
+          aria-label="Back to top"
+          onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: 12 }}
+          transition={{ duration: 0.18 }}
+          className="fixed bottom-6 right-6 z-40 flex h-11 w-11 items-center justify-center rounded-full border bg-card/95 text-foreground shadow-lg backdrop-blur-sm transition-colors hover:bg-accent active:scale-95"
+        >
+          <ArrowUp className="h-4.5 w-4.5" aria-hidden />
+        </motion.button>
+      ) : null}
+    </AnimatePresence>
+  );
 }
 
 export function GorgeApp({ submarkets, listings, stats }: GorgeAppProps) {
@@ -138,6 +177,7 @@ export function GorgeApp({ submarkets, listings, stats }: GorgeAppProps) {
           </motion.div>
         </AnimatePresence>
       </main>
+      <BackToTop />
       <SiteFooter />
     </div>
   );

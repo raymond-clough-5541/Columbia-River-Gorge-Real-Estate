@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import {
   CartesianGrid,
   Line,
@@ -12,15 +12,22 @@ import {
   YAxis,
 } from "recharts";
 import {
+  BookmarkPlus,
+  Download,
   Flame,
+  FolderOpen,
   LineChart as LineChartIcon,
   RotateCcw,
   Sigma,
+  Trash2,
   TrendingUp,
 } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { downloadCsv, timestampSuffix, toCsv } from "@/lib/csv";
+import { useToast } from "@/hooks/use-toast";
 import {
   buildProjectionSeries,
   fmtCurrency,
@@ -41,6 +48,71 @@ const MAX_SELECTED = 5;
 /** Submarket curve palette — emerald is reserved for the custom scenario. */
 const PALETTE = ["#0d9488", "#64748b", "#f59e0b", "#f43f5e", "#3f3f46"];
 const SCENARIO_COLOR = "#10b981";
+
+/* ---------------------------------------------------------------- */
+/* Saved scenarios — localStorage persistence via a stable,          */
+/* lint-safe useSyncExternalStore subscription.                      */
+/* ---------------------------------------------------------------- */
+
+interface SavedScenario {
+  id: string;
+  name: string;
+  selected: string[];
+  pv: number;
+  cagr: number;
+  horizon: number;
+  showScenario: boolean;
+  savedAt: string;
+}
+
+const STORAGE_KEY = "crgnsa-saved-scenarios";
+const CHANGE_EVENT = "crgnsa:saved-scenarios-changed";
+const EMPTY: SavedScenario[] = [];
+
+let cachedRaw: string | null = null;
+let cachedList: SavedScenario[] = EMPTY;
+
+function readSaved(): SavedScenario[] {
+  let raw: string | null = null;
+  try {
+    raw = window.localStorage.getItem(STORAGE_KEY);
+  } catch {
+    raw = null;
+  }
+  if (raw === cachedRaw) return cachedList;
+  cachedRaw = raw;
+  try {
+    const parsed = raw ? (JSON.parse(raw) as SavedScenario[]) : [];
+    cachedList = Array.isArray(parsed) ? parsed : EMPTY;
+  } catch {
+    cachedList = EMPTY;
+  }
+  return cachedList;
+}
+
+function writeSaved(list: SavedScenario[]): void {
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+    window.dispatchEvent(new Event(CHANGE_EVENT));
+  } catch {
+    /* storage unavailable — ignore */
+  }
+}
+
+function useSavedScenarios(): SavedScenario[] {
+  return useSyncExternalStore(
+    (cb) => {
+      window.addEventListener(CHANGE_EVENT, cb);
+      window.addEventListener("storage", cb);
+      return () => {
+        window.removeEventListener(CHANGE_EVENT, cb);
+        window.removeEventListener("storage", cb);
+      };
+    },
+    readSaved,
+    () => EMPTY
+  );
+}
 
 interface TooltipEntry {
   name?: string;
@@ -158,6 +230,79 @@ export function ProjectionsView({ submarkets }: { submarkets: Submarket[] }) {
     setCagr(4.7);
     setHorizon(20);
     setShowScenario(true);
+    setScenarioName("");
+  };
+
+  /* ---------------- Saved-scenario actions ---------------- */
+  const saved = useSavedScenarios();
+  const [scenarioName, setScenarioName] = useState("");
+  const { toast } = useToast();
+
+  const saveScenario = () => {
+    const name = scenarioName.trim();
+    if (!name) {
+      toast({
+        title: "Name your scenario first",
+        description: "Give the hypothesis a label — e.g. “Dallesport r=6% run” — then save.",
+      });
+      return;
+    }
+    const next: SavedScenario[] = [
+      {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        name,
+        selected: [...selected],
+        pv,
+        cagr,
+        horizon,
+        showScenario,
+        savedAt: new Date().toISOString(),
+      },
+      ...saved,
+    ].slice(0, 12); // cap the ledger
+    writeSaved(next);
+    setScenarioName("");
+    toast({
+      title: `Scenario “${name}” saved`,
+      description: "Stored locally in this browser — reload it any time below.",
+    });
+  };
+
+  const loadScenario = (sc: SavedScenario) => {
+    setSelected(
+      sc.selected.filter((slug) => submarkets.some((s) => s.slug === slug))
+    );
+    setPv(sc.pv);
+    setCagr(sc.cagr);
+    setHorizon(sc.horizon);
+    setShowScenario(sc.showScenario);
+    toast({ title: `Loaded “${sc.name}”`, description: "Inputs restored to the saved hypothesis." });
+  };
+
+  const deleteScenario = (sc: SavedScenario) => {
+    writeSaved(saved.filter((s) => s.id !== sc.id));
+    toast({ title: `Removed “${sc.name}”` });
+  };
+
+  const exportSeriesCsv = () => {
+    const headers = [
+      "Year",
+      ...selectedMarkets.map((s) => `${s.name} (${s.state})`),
+      ...(showScenario ? ["Custom Scenario"] : []),
+    ];
+    const data = series.map((row) => [
+      Number(row.year),
+      ...selectedMarkets.map((s) => Math.round(Number(row[s.slug]))),
+      ...(showScenario ? [Math.round(Number(row.scenario))] : []),
+    ]);
+    downloadCsv(
+      `crgnsa-projection-series-${timestampSuffix()}.csv`,
+      toCsv(headers, data)
+    );
+    toast({
+      title: "Projection series exported",
+      description: `${series.length} annual snapshots · ${selectedMarkets.length} market${selectedMarkets.length === 1 ? "" : "s"}${showScenario ? " + scenario" : ""}.`,
+    });
   };
 
   return (
@@ -337,6 +482,81 @@ export function ProjectionsView({ submarkets }: { submarkets: Submarket[] }) {
                 </p>
               </div>
             </div>
+          </div>
+
+          {/* Saved scenarios */}
+          <div className="rounded-xl border bg-card p-5 shadow-sm">
+            <div className="flex items-center gap-2">
+              <BookmarkPlus className="h-4 w-4 text-muted-foreground" aria-hidden />
+              <MicroLabel>Saved Scenarios</MicroLabel>
+            </div>
+            <div className="mt-3 flex gap-2">
+              <Input
+                value={scenarioName}
+                onChange={(e) => setScenarioName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") saveScenario();
+                }}
+                placeholder="e.g. Dallesport r=6% run"
+                className="h-9 text-[13px]"
+                aria-label="Scenario name"
+                maxLength={48}
+              />
+              <Button
+                onClick={saveScenario}
+                className="h-9 shrink-0 gap-1.5 px-3 text-[13px] active:scale-[0.98]"
+              >
+                <BookmarkPlus className="h-3.5 w-3.5" aria-hidden />
+                Save
+              </Button>
+            </div>
+
+            {saved.length > 0 ? (
+              <ul className="thin-scroll mt-3 max-h-64 space-y-2 overflow-y-auto pr-1">
+                {saved.map((sc) => (
+                  <li
+                    key={sc.id}
+                    className="group rounded-lg border bg-background p-2.5 transition-colors hover:border-zinc-400 dark:hover:border-zinc-600"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="truncate text-[13px] font-semibold">
+                        {sc.name}
+                      </p>
+                      <div className="flex shrink-0 items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => loadScenario(sc)}
+                          aria-label={`Load scenario ${sc.name}`}
+                          title="Restore these inputs"
+                          className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-emerald-500/10 hover:text-emerald-600 dark:hover:text-emerald-400"
+                        >
+                          <FolderOpen className="h-3.5 w-3.5" aria-hidden />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => deleteScenario(sc)}
+                          aria-label={`Delete scenario ${sc.name}`}
+                          title="Remove this scenario"
+                          className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-rose-500/10 hover:text-rose-600 dark:hover:text-rose-400"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                        </button>
+                      </div>
+                    </div>
+                    <p className="mt-0.5 truncate text-[11.5px] tabular-nums text-muted-foreground">
+                      {fmtCurrency(sc.pv, { compact: true })} · {fmtPct(sc.cagr)} ·{" "}
+                      {sc.horizon} yrs · {sc.selected.length} market
+                      {sc.selected.length === 1 ? "" : "s"}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-3 rounded-lg border border-dashed p-3 text-[12px] leading-relaxed text-muted-foreground">
+                Save the current inputs as a named hypothesis — comparisons
+                persist locally in this browser and survive reloads.
+              </p>
+            )}
           </div>
         </div>
 
@@ -550,8 +770,16 @@ export function ProjectionsView({ submarkets }: { submarkets: Submarket[] }) {
 
       {/* Underlying series table */}
       <div className="mt-6 overflow-x-auto rounded-xl border bg-card shadow-sm">
-        <div className="flex items-center gap-2 px-5 py-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
           <MicroLabel>Underlying Series · Annual Snapshots</MicroLabel>
+          <button
+            type="button"
+            onClick={exportSeriesCsv}
+            className="inline-flex h-8 items-center gap-2 rounded-lg border bg-background px-3 text-[12.5px] font-medium shadow-sm transition-all hover:border-zinc-400 hover:shadow-sm dark:hover:border-zinc-600 active:scale-[0.98]"
+          >
+            <Download className="h-3.5 w-3.5" aria-hidden />
+            Export series CSV
+          </button>
         </div>
         <div className="thin-scroll max-h-72 overflow-auto">
           <table className="w-full min-w-[640px] text-[13px] tabular-nums">
@@ -583,7 +811,7 @@ export function ProjectionsView({ submarkets }: { submarkets: Submarket[] }) {
                     <tr
                       key={year}
                       className={cn(
-                        "border-t",
+                        "border-t transition-colors hover:bg-muted/40",
                         is2046 && "bg-emerald-500/[0.06] font-semibold"
                       )}
                     >

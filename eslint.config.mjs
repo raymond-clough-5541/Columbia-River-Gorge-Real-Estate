@@ -44,7 +44,23 @@ const eslintConfig = [...nextCoreWebVitals, ...nextTypescript, {
     "no-useless-escape": "off",
   },
 }, {
-  ignores: ["node_modules/**", ".next/**", "out/**", "build/**", "next-env.d.ts", "examples/**", "skills"]
+  ignores: [
+    "node_modules/**",
+    ".next/**",
+    "out/**",
+    "build/**",
+    "next-env.d.ts",
+    "examples/**",
+    "skills",
+    // Vendored user collections (portable-skills / portable-workflows /
+    // git-hooks) are reference material, not part of the app build.
+    "portable-skills/**",
+    "portable-workflows/**",
+    "git-hooks/**",
+    "mini-services/**",
+    ".zscripts/**",
+    "supabase/**",
+  ],
 }];
 
 export default eslintConfig;

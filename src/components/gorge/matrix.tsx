@@ -6,6 +6,7 @@ import {
   ArrowUp,
   ArrowUpDown,
   ChevronRight,
+  Download,
   Droplets,
   ExternalLink,
   Flame,
@@ -23,6 +24,8 @@ import {
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { cn } from "@/lib/utils";
+import { downloadCsv, timestampSuffix, toCsv, type CsvCell } from "@/lib/csv";
+import { useToast } from "@/hooks/use-toast";
 import {
   fmtAcres,
   fmtCurrency,
@@ -112,6 +115,67 @@ export function MatrixView({
 
   const detail = submarkets.find((s) => s.slug === detailSlug) ?? null;
 
+  const { toast } = useToast();
+
+  const exportCsv = () => {
+    const headers = [
+      "Market",
+      "State",
+      "County",
+      "Jurisdiction Type",
+      "Regulatory Framework",
+      "UGB/UGA Footprint (ac)",
+      "Gross Vacant (ac)",
+      "Net Buildable Min (ac)",
+      "Net Buildable Max (ac)",
+      "Net Buildable Mid (ac)",
+      "2026 Baseline Median ($)",
+      "Price/SqFt Min ($)",
+      "Price/SqFt Max ($)",
+      "Days on Market Min",
+      "Days on Market Max",
+      "Projected 20-yr CAGR (%)",
+      "2046 Forecast Min ($)",
+      "2046 Forecast Max ($)",
+      "Est. Raw-Land Depletion Year",
+      "Water Purveyor",
+      "Wastewater System",
+      "Primary Constraints & WUI Risk",
+    ];
+    const data: CsvCell[][] = rows.map((s) => [
+      s.name,
+      s.state,
+      s.county,
+      s.jurisdictionType,
+      s.regulatoryFramework,
+      s.totalFootprintAcres,
+      s.grossVacantAcres,
+      s.netBuildableAcresMin,
+      s.netBuildableAcresMax,
+      Math.round(((s.netBuildableAcresMin + s.netBuildableAcresMax) / 2) * 10) / 10,
+      s.baselinePrice2026,
+      Math.round(s.pricePerSqftMin),
+      Math.round(s.pricePerSqftMax),
+      s.daysOnMarketMin,
+      s.daysOnMarketMax,
+      s.projectedCagr,
+      s.projectedPrice2046Min,
+      s.projectedPrice2046Max,
+      s.depletionYear,
+      s.waterPurveyor,
+      s.wastewaterSystem,
+      s.primaryConstraints,
+    ]);
+    downloadCsv(
+      `crgnsa-master-matrix-${timestampSuffix()}.csv`,
+      toCsv(headers, data)
+    );
+    toast({
+      title: "Master Matrix exported",
+      description: `${rows.length} jurisdiction${rows.length === 1 ? "" : "s"} · current filters and sort order applied.`,
+    });
+  };
+
   const toggleSort = (col: SortCol) => {
     if (col === sortCol) {
       setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -127,6 +191,17 @@ export function MatrixView({
         eyebrow="Master Real Estate & Land Inventory Matrix"
         title="All 11 jurisdictions, one sortable ledger"
         description="Filter by state and jurisdiction type, sort any column, and click a row for the infrastructure dossier — water purveyors, wastewater capacity, and fire-risk constraints that gate every buildable acre."
+        action={
+          <button
+            type="button"
+            onClick={exportCsv}
+            disabled={rows.length === 0}
+            className="inline-flex h-9 items-center gap-2 rounded-lg border bg-card px-4 text-[13px] font-medium shadow-sm transition-all hover:border-zinc-400 hover:shadow disabled:cursor-not-allowed disabled:opacity-50 dark:hover:border-zinc-600 active:scale-[0.98]"
+          >
+            <Download className="h-3.5 w-3.5" aria-hidden />
+            Export CSV
+          </button>
+        }
       />
 
       {/* Filter + summary bar */}

@@ -5,6 +5,28 @@
 
 ---
 
+Task ID: 2
+Agent: Z.ai Code (scheduled webDevReview cycle — round 1)
+Task: QA sweep of the stable platform, then deliver the worklog's next-phase roadmap: CSV exports, saved projection scenarios, flagship photo gallery, and a styling polish pass.
+
+Work Log:
+- QA sweep (agent-browser): loaded all 5 workspaces (`#/`, `#/matrix`, `#/projections`, `#/listings`, `#/submarket/dallesport`, `#/submarket/mosier`) — zero runtime errors, zero console warnings. Spot-checked matrix rows render.
+- Generated 3 new AI images for the flagship estate dossier: `estate-interior.png` (great room), `estate-vineyard.png` (vineyard + residence), `estate-grounds.png` (terrace/patio) → 12+3 = 15 images total.
+- New feature — CSV export (`src/lib/csv.ts`): Excel-friendly BOM+CRLF `toCsv`/`downloadCsv`/`timestampSuffix`. Wired into: (a) Master Matrix "Export CSV" header button → exports all 22 columns for the current filter+sort state with toast confirmation; (b) Projections "Export series CSV" on the annual snapshot table → year × markets × scenario matrix.
+- New feature — saved projection scenarios: localStorage-backed (`crgnsa-saved-scenarios`, 12-entry cap) via a lint-safe cached `useSyncExternalStore` subscription (custom change event + `storage` event). UI card in the projections controls column: name input (Enter-to-save), scenario list with meta (PV · CAGR · horizon · market count), load (FolderOpen → restores all inputs) and delete (Trash2) actions, toast feedback on every action.
+- New feature — flagship photo gallery: `getGalleryImages()` + `ListingGallery` component in `listing-dialog.tsx` — 4-image dossier for the GMA Luxury Farm & Vineyard Estate (main + interior + vineyard + grounds) with prev/next arrows, 1/4 counter badge, emerald-outlined thumbnail strip; state keyed per listing id. Single-image listings fall back gracefully (verified). Grid cards show a camera-count chip when a gallery exists.
+- Styling polish: (1) `CountUp` animated numeric reveal on the four overview KPI cards (framer-motion `animate` + `useInView` once, imperative textContent updates — ref-latest pattern kept lint-clean); (2) floating BackToTop button (scroll-past-700px via useSyncExternalStore, AnimatePresence fade/slide, smooth scroll); (3) animated hero scroll cue linking to `#corridor-metrics` (section got id + scroll-mt); (4) hover rows on the projections snapshot table; (5) active:scale micro-interactions on new buttons.
+- ESLint config: added ignores for the merged user collections (`portable-skills/`, `portable-workflows/`, `git-hooks/`, `mini-services/`, `.zscripts/`, `supabase/`) — their vendored eslint-disable comments referenced uninstalled security plugins.
+- Fixed lint error found this round: react-hooks/refs flagged ref-write-during-render in CountUp → moved formatRef update into an effect (blessed latest-ref pattern).
+
+Stage Summary:
+- ✅ All new features browser-verified: matrix CSV (toast "11 jurisdictions"), scenario save → localStorage JSON confirmed, CAGR changed 4.7→5.5 → load restored 4.7, delete cleared storage, series CSV toast, gallery 1/4 → next → 2/4 (estate-interior) → thumbnail 3 → 3/4 (estate-vineyard), non-gallery listing regression clean, mobile listing grid (17 view buttons), back-to-top appears after scroll.
+- ✅ `bun run lint` clean; dev.log error-free; all API routes 200.
+- Cumulative feature set now: 5 analytics workspaces + CSV exports + saved scenarios + photo dossier + animations.
+- Next-phase candidates (for round 2): mortgage/cashflow calculator on listings; "depletion-adjusted CAGR" toggle on projections (cap appreciation post-depletion); comparison mode (two saved scenarios side-by-side); matrix column visibility toggles; submarket profile: comparable-market links; overview: KPI sparkline mini-charts; print stylesheet for dossiers; accessibility audit (focus order in dialogs/sheets).
+
+---
+
 Task ID: 1
 Agent: Z.ai Code (main orchestrator)
 Task: Build complete production-grade Columbia River Gorge (CRGNSA) real estate analytics platform — DB schema, seed data, API routes, and 5 analytics workspaces (Overview / Master Matrix / Projections / Listings / Submarket profiles) with dark-light theming.

@@ -1,6 +1,7 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
+import { animate, useInView } from "framer-motion";
 import { cn } from "@/lib/utils";
 import {
   CAGR_TIER_STYLES,
@@ -9,6 +10,49 @@ import {
   type StateCode,
 } from "@/lib/gorge";
 import { Flame, TrendingUp, type LucideIcon } from "lucide-react";
+
+/* ---------------------------------------------------------------- */
+/* Count-up — animated numeric reveal when scrolled into view        */
+/* ---------------------------------------------------------------- */
+
+export function CountUp({
+  target,
+  format,
+  duration = 1.1,
+  className,
+}: {
+  target: number;
+  format: (v: number) => string;
+  duration?: number;
+  className?: string;
+}) {
+  const ref = useRef<HTMLSpanElement | null>(null);
+  const formatRef = useRef(format);
+  // Keep the latest formatter for the imperative animation without
+  // restarting it on every parent re-render (blessed latest-ref pattern).
+  useEffect(() => {
+    formatRef.current = format;
+  });
+  const inView = useInView(ref, { once: true, margin: "-40px" });
+
+  useEffect(() => {
+    if (!inView) return;
+    const controls = animate(0, target, {
+      duration,
+      ease: [0.16, 1, 0.3, 1],
+      onUpdate: (v) => {
+        if (ref.current) ref.current.textContent = formatRef.current(v);
+      },
+    });
+    return () => controls.stop();
+  }, [inView, target, duration]);
+
+  return (
+    <span ref={ref} className={cn("tabular-nums", className)}>
+      {format(0)}
+    </span>
+  );
+}
 
 /* ---------------------------------------------------------------- */
 /* Typography primitives                                             */
