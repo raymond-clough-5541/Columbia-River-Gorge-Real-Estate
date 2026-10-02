@@ -1,0 +1,44 @@
+{
+  "name": "ft-authz-negative-anon-split",
+  "description": "R210 P2 (security plan section 2 / section 5): the SPLIT re-run for ft-authz-negative-anon. Run 2 (batch5, after the equals-to-contains asset fix) passed 27/29 with ONLY doors 13-14 (steps 26-27, users-verify + users-bulk-action) 429-blocked - the 11th + 12th POSTs vs the shared 10/h ip:unknown api-post bucket (the rate limiter working as designed; the split re-run covers the two doors). This split runs ONLY those 2 doors against a fresh dev restart: an ANONYMOUS visitor (no sign-in) probes both POST admin doors with a freshly minted public CSRF token so the ROLE gate answers - every door must refuse with 401. The 27 passed steps are NOT re-run - their receipts live in the batch5 devlog + the main scenario receipt.",
+  "base": "http://localhost:3000",
+  "viewport": "1280x900",
+  "settleMs": 2500,
+  "navRetries": 2,
+  "steps": [
+    {
+      "action": "clear"
+    },
+    {
+      "action": "nav",
+      "url": "/?surface=welcome",
+      "expectText": "Sign In",
+      "shot": "01-anon-fresh-welcome",
+      "timeout": 30000
+    },
+    {
+      "action": "evalExpect",
+      "name": "anon-session-absent",
+      "expr": "(() => 'session=' + (localStorage.getItem('ft_session') || 'none'))()",
+      "contains": "session=none"
+    },
+    {
+      "action": "evalExpect",
+      "name": "admin-door-13-users-verify-401-with-csrf",
+      "expr": "(() => { const c = new XMLHttpRequest(); c.open('GET', '/api/auth/csrf', false); c.send(); const t = (JSON.parse(c.responseText) || {}).csrfToken || ''; const x = new XMLHttpRequest(); x.open('POST', '/api/admin/users/u_seller1/verify', false); x.setRequestHeader('Content-Type', 'application/json'); x.setRequestHeader('X-CSRF-Token', t); x.send(JSON.stringify({ grant: true })); return 'csrf=' + (t ? 'ok' : 'none') + ' status=' + x.status + ' body=' + x.responseText.substring(0, 120) })()",
+      "contains": "csrf=ok status=401"
+    },
+    {
+      "action": "evalExpect",
+      "name": "admin-door-14-users-bulk-action-401-with-csrf",
+      "expr": "(() => { const c = new XMLHttpRequest(); c.open('GET', '/api/auth/csrf', false); c.send(); const t = (JSON.parse(c.responseText) || {}).csrfToken || ''; const x = new XMLHttpRequest(); x.open('POST', '/api/admin/users/bulk-action', false); x.setRequestHeader('Content-Type', 'application/json'); x.setRequestHeader('X-CSRF-Token', t); x.send(JSON.stringify({ userIds: ['u_seller1'], action: 'approve' })); return 'csrf=' + (t ? 'ok' : 'none') + ' status=' + x.status + ' body=' + x.responseText.substring(0, 120) })()",
+      "contains": "csrf=ok status=401"
+    },
+    {
+      "action": "evalExpect",
+      "name": "anon-still-signed-out-after-probes",
+      "expr": "(() => 'session=' + (localStorage.getItem('ft_session') || 'none'))()",
+      "contains": "session=none"
+    }
+  ]
+}

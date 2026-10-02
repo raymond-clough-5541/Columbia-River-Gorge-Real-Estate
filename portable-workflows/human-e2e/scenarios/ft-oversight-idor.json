@@ -1,0 +1,57 @@
+{
+  "name": "ft-oversight-idor",
+  "description": "R210 P2 (security plan section 2 / section 5): the oversight IDOR probe, member leg. Jordan Lee (plain member, the real scrypt door) mints a REAL conversation through the UI (Message Seller on Maria Lopez's walnut coffee table - the R206 walk grammar), then fetches the staff oversight door with his OWN session for that REAL conversation id: /api/moderation/oversight?conversationId=<real> must refuse with 403 (a participant is not staff).",
+  "base": "http://localhost:3000",
+  "viewport": "1280x900",
+  "settleMs": 2500,
+  "navRetries": 2,
+  "steps": [
+    { "action": "clear" },
+    {
+      "action": "nav",
+      "url": "/?surface=welcome",
+      "expectText": "Sign In",
+      "timeout": 30000
+    },
+    { "action": "click", "role": "tab", "name": "Sign In" },
+    { "action": "fill", "label": "Email", "text": "jordan@example.com" },
+    { "action": "fill", "label": "Password", "text": "testpass123" },
+    { "action": "press", "key": "Enter" },
+    { "action": "wait", "text": "Vintage steel road bike", "timeout": 20000, "critical": true },
+    { "action": "expect", "urlContains": "surface=app" },
+    {
+      "action": "nav",
+      "url": "/?surface=app&page=listing&listingId=l_2",
+      "expectText": "Mid century walnut coffee table",
+      "shot": "01-maria-listing-detail",
+      "timeout": 30000
+    },
+    { "action": "click", "role": "button", "name": "Message Seller", "critical": true },
+    { "action": "wait", "text": "Maria Lopez", "timeout": 15000 },
+    { "action": "shot", "label": "02-real-conversation-minted", "expectText": "Maria Lopez" },
+    {
+      "action": "evalExpect",
+      "name": "member-own-conversation-200",
+      "expr": "(() => { const x = new XMLHttpRequest(); x.open('GET', '/api/conversations', false); x.send(); const list = (JSON.parse(x.responseText) || {}).conversations || []; const mine = list.find((c) => ((c.participantIds || []).includes('u_seller1'))) || null; return 'status=' + x.status + ' count=' + list.length + ' found=' + (mine ? 'u_seller1-thread:' + mine.id : 'none') })()",
+      "contains": "status=200 count=1 found=u_seller1-thread:"
+    },
+    {
+      "action": "evalExpect",
+      "name": "oversight-list-403",
+      "expr": "(() => { const x = new XMLHttpRequest(); x.open('GET', '/api/moderation/oversight', false); x.send(); return 'status=' + x.status + ' body=' + x.responseText.substring(0, 120) })()",
+      "contains": "status=403 body={\\\"error\\\":\\\"Forbidden"
+    },
+    {
+      "action": "evalExpect",
+      "name": "oversight-thread-idor-403",
+      "expr": "(() => { const a = new XMLHttpRequest(); a.open('GET', '/api/conversations', false); a.send(); const list = (JSON.parse(a.responseText) || {}).conversations || []; const mine = list.find((c) => ((c.participantIds || []).includes('u_seller1'))) || list[0] || null; const id = mine ? mine.id : 'none'; const x = new XMLHttpRequest(); x.open('GET', '/api/moderation/oversight?conversationId=' + encodeURIComponent(id), false); x.send(); return 'convId=' + id + ' status=' + x.status + ' body=' + x.responseText.substring(0, 120) })()",
+      "contains": "status=403 body={\\\"error\\\":\\\"Forbidden"
+    },
+    {
+      "action": "evalExpect",
+      "name": "member-thread-still-readable-own-door",
+      "expr": "(() => { const a = new XMLHttpRequest(); a.open('GET', '/api/conversations', false); a.send(); const list = (JSON.parse(a.responseText) || {}).conversations || []; const mine = list.find((c) => ((c.participantIds || []).includes('u_seller1'))) || list[0] || null; const id = mine ? mine.id : 'none'; const x = new XMLHttpRequest(); x.open('GET', '/api/conversations/' + encodeURIComponent(id), false); x.send(); return 'ownDoorStatus=' + x.status })()",
+      "contains": "ownDoorStatus=200"
+    }
+  ]
+}

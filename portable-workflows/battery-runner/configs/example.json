@@ -1,0 +1,9 @@
+{
+  "name": "example",
+  "logDir": "logs/battery",
+  "gates": [
+    { "name": "tsc", "command": "bunx tsc --noEmit", "timeoutSec": 300 },
+    { "name": "lint", "command": "bun run lint" },
+    { "name": "tests", "command": "bunx vitest run", "timeoutSec": 600 }
+  ]
+}

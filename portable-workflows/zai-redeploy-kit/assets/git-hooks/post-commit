@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# Auto-push hook — fires after every commit on main, pushes to EVERY
+# configured remote. Installed at .git/hooks/post-commit
+#
+# Design (proven across 5 sandbox rollbacks in the source repo):
+# - Only fires on `main` branch (skip feature branches, WIP, etc.)
+# - Pushes to every configured remote (git remote) — remotes that don't
+#   exist are skipped cleanly
+# - Logs to .git/auto-push.log so failures are debuggable
+# - NEVER fails the commit (always exits 0) — push failures are non-fatal
+# - Self-healing PAT: applies a fresh GitHub token dropped at
+#   upload/GITHUB-PAT.txt BEFORE pushing (fast no-op when absent)
+# - Divergence protection: on a rejected non-fast-forward push it fetches,
+#   checks ancestry, force-pushes ONLY if the remote tip is an ancestor of
+#   local HEAD (nothing lost), otherwise logs the divergence and skips.
+#   A DIVERGED entry in the log = the local repo fell behind the remotes
+#   → run the rollback-recovery playbook in docs/REDEPLOY.md.
+
+set -u  # treat unset vars as errors, but don't exit on error
+
+LOG="$(git rev-parse --git-dir)/auto-push.log"
+BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '')"
+VERBOSE="${PUSH_VERBOSE:-0}"
+
+# Skip if not on main — feature branches stay local until explicitly merged.
+if [ "$BRANCH" != "main" ]; then
+  exit 0
+fi
+
+# Skip if HEAD already matches both remotes (no work to do).
+LOCAL_HEAD="$(git rev-parse HEAD 2>/dev/null || echo '')"
+if [ -z "$LOCAL_HEAD" ]; then
+  exit 0
+fi
+
+timestamp() { date -u '+%Y-%m-%dT%H:%M:%SZ'; }
+
+# The self-healing PAT drop-file. If the owner dropped a fresh GitHub
+# token into upload/GITHUB-PAT.txt (gitignored — never committed), validate
+# it + re-point the github/origin remotes BEFORE pushing. Fast path when no
+# drop-file exists: one file-existence test, no network, no output. Never
+# fails the commit (|| true), never blocks the push loop.
+REFRESH_SH="$(git rev-parse --show-toplevel 2>/dev/null)/scripts/github-pat-refresh.sh"
+if [ -f "$REFRESH_SH" ] && { [ -f upload/GITHUB-PAT.txt ] || [ -f upload/github-pat.txt ]; }; then
+  echo "[$(timestamp)] pat-refresh: drop-file detected — applying before push" >> "$LOG"
+  bash "$REFRESH_SH" >> "$LOG" 2>&1 || true
+fi
+
+echo "[$(timestamp)] post-commit: HEAD=$LOCAL_HEAD branch=$BRANCH" >> "$LOG"
+
+# Push to every configured remote (parallel). Each push writes its own log line.
+push_one() {
+  local remote="$1"
+  local start end rc out
+  start=$(date +%s)
+  out=$(git push --quiet --no-verify "$remote" main 2>&1)
+  rc=$?
+  # Non-fast-forward recovery: fetch remote, check ancestry, force-push if safe.
+  if [ "$rc" -ne 0 ] && echo "$out" | grep -q "non-fast-forward\|rejected"; then
+    echo "[$(timestamp)]   ⚠ $remote (non-fast-forward — attempting recovery)" >> "$LOG"
+    git fetch --quiet "$remote" main 2>/dev/null
+    local remote_tip
+    remote_tip=$(git rev-parse "$remote/main" 2>/dev/null || echo '')
+    if [ -n "$remote_tip" ]; then
+      # Is the remote tip an ancestor of our local HEAD?
+      # If yes → our HEAD is a superset → safe to force-push.
+      if git merge-base --is-ancestor "$remote_tip" "$LOCAL_HEAD" 2>/dev/null; then
+        echo "[$(timestamp)]   ↻ $remote (remote tip is ancestor of local HEAD — force-pushing)" >> "$LOG"
+        out=$(git push --quiet --no-verify --force-with-lease="$remote/main:$remote_tip" "$remote" main 2>&1)
+        rc=$?
+      else
+        echo "[$(timestamp)]   ✗ $remote (DIVERGED — remote has commits not in local HEAD; manual merge required)" >> "$LOG"
+        echo "[$(timestamp)]     remote_tip=$remote_tip local_head=$LOCAL_HEAD" >> "$LOG"
+        echo "[$(timestamp)]     output: $out" >> "$LOG"
+        end=$(date +%s)
+        return
+      fi
+    fi
+  fi
+  end=$(date +%s)
+  if [ "$rc" -eq 0 ]; then
+    echo "[$(timestamp)]   ✓ $remote (push ok, $((end-start))s)" >> "$LOG"
+    [ "$VERBOSE" = "1" ] && echo "  pushed to $remote"
+  else
+    echo "[$(timestamp)]   ✗ $remote (push FAILED rc=$rc, $((end-start))s)" >> "$LOG"
+    echo "[$(timestamp)]     output: $out" >> "$LOG"
+    # An auth failure is the dead-PAT signature — point at the fix.
+    if echo "$out" | grep -q "Authentication failed\|Invalid username or token"; then
+      echo "[$(timestamp)]     HINT: the GitHub PAT is dead/expired. Mint a fresh fine-grained token (this repo, Contents: Read+write) and paste it into upload/GITHUB-PAT.txt — the next commit applies it automatically (scripts/github-pat-refresh.sh), or run: bash scripts/github-catchup.sh" >> "$LOG"
+    fi
+    [ "$VERBOSE" = "1" ] && echo "  FAILED to push to $remote: $out" >&2
+  fi
+}
+
+for remote in $(git remote); do
+  push_one "$remote" &
+done
+wait
+
+# Always exit 0 — a failed push must NOT fail the commit.
+exit 0

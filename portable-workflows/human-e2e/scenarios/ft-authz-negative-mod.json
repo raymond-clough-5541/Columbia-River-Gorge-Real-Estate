@@ -1,0 +1,86 @@
+{
+  "name": "ft-authz-negative-mod",
+  "description": "R210 P2 (security plan section 2 / section 5): a signed-in MEMBER hits each of the 9 moderation doors. Jordan Lee (u_me, plain member, the real scrypt door) signs in, then probes every /api/moderation/* route in-page with credentials: the 6 GET doors by plain XHR, the 3 POST-only doors (escalations / mute / refer) with a freshly minted CSRF token so the ROLE gate answers, not the CSRF gate. Every door must refuse with 403 and the gate's own sentence.",
+  "base": "http://localhost:3000",
+  "viewport": "1280x900",
+  "settleMs": 2500,
+  "navRetries": 2,
+  "steps": [
+    { "action": "clear" },
+    {
+      "action": "nav",
+      "url": "/?surface=welcome",
+      "expectText": "Sign In",
+      "shot": "01-member-fresh-welcome",
+      "timeout": 30000
+    },
+    { "action": "click", "role": "tab", "name": "Sign In" },
+    { "action": "fill", "label": "Email", "text": "jordan@example.com" },
+    { "action": "fill", "label": "Password", "text": "testpass123" },
+    { "action": "press", "key": "Enter" },
+    { "action": "wait", "text": "Vintage steel road bike", "timeout": 20000, "critical": true },
+    { "action": "expect", "urlContains": "surface=app" },
+    { "action": "shot", "label": "02-member-signed-in", "expectText": "Vintage steel road bike" },
+    {
+      "action": "evalExpect",
+      "name": "door-1-activity-403",
+      "expr": "(() => { const x = new XMLHttpRequest(); x.open('GET', '/api/moderation/activity', false); x.send(); return 'status=' + x.status + ' body=' + x.responseText.substring(0, 120) })()",
+      "contains": "status=403 body={\\\"error\\\":\\\"Forbidden"
+    },
+    {
+      "action": "evalExpect",
+      "name": "door-2-campaign-review-403",
+      "expr": "(() => { const x = new XMLHttpRequest(); x.open('GET', '/api/moderation/campaign-review', false); x.send(); return 'status=' + x.status + ' body=' + x.responseText.substring(0, 120) })()",
+      "contains": "status=403 body={\\\"error\\\":\\\"Forbidden"
+    },
+    {
+      "action": "evalExpect",
+      "name": "door-3-escalations-403-with-csrf",
+      "expr": "(() => { const c = new XMLHttpRequest(); c.open('GET', '/api/auth/csrf', false); c.send(); const t = (JSON.parse(c.responseText) || {}).csrfToken || ''; const x = new XMLHttpRequest(); x.open('POST', '/api/moderation/escalations', false); x.setRequestHeader('Content-Type', 'application/json'); x.setRequestHeader('X-CSRF-Token', t); x.send(JSON.stringify({ action: 'resolve', escalationId: 'e_r210' })); return 'csrf=' + (t ? 'ok' : 'none') + ' status=' + x.status + ' body=' + x.responseText.substring(0, 120) })()",
+      "contains": "csrf=ok status=403"
+    },
+    {
+      "action": "evalExpect",
+      "name": "door-4-listing-review-403",
+      "expr": "(() => { const x = new XMLHttpRequest(); x.open('GET', '/api/moderation/listing-review', false); x.send(); return 'status=' + x.status + ' body=' + x.responseText.substring(0, 120) })()",
+      "contains": "status=403 body={\\\"error\\\":\\\"Forbidden"
+    },
+    {
+      "action": "evalExpect",
+      "name": "door-5-mute-403-with-csrf",
+      "expr": "(() => { const c = new XMLHttpRequest(); c.open('GET', '/api/auth/csrf', false); c.send(); const t = (JSON.parse(c.responseText) || {}).csrfToken || ''; const x = new XMLHttpRequest(); x.open('POST', '/api/moderation/mute', false); x.setRequestHeader('Content-Type', 'application/json'); x.setRequestHeader('X-CSRF-Token', t); x.send(JSON.stringify({ userId: 'u_seller1', mute: true, reason: 'r210 negative walk: the member leg must refuse' })); return 'csrf=' + (t ? 'ok' : 'none') + ' status=' + x.status + ' body=' + x.responseText.substring(0, 120) })()",
+      "contains": "csrf=ok status=403"
+    },
+    {
+      "action": "evalExpect",
+      "name": "door-6-oversight-403",
+      "expr": "(() => { const x = new XMLHttpRequest(); x.open('GET', '/api/moderation/oversight', false); x.send(); return 'status=' + x.status + ' body=' + x.responseText.substring(0, 120) })()",
+      "contains": "status=403 body={\\\"error\\\":\\\"Forbidden"
+    },
+    {
+      "action": "evalExpect",
+      "name": "door-7-refer-403-with-csrf",
+      "expr": "(() => { const c = new XMLHttpRequest(); c.open('GET', '/api/auth/csrf', false); c.send(); const t = (JSON.parse(c.responseText) || {}).csrfToken || ''; const x = new XMLHttpRequest(); x.open('POST', '/api/moderation/refer', false); x.setRequestHeader('Content-Type', 'application/json'); x.setRequestHeader('X-CSRF-Token', t); x.send(JSON.stringify({ userId: 'u_seller1', reason: 'r210 negative walk: the member leg must refuse' })); return 'csrf=' + (t ? 'ok' : 'none') + ' status=' + x.status + ' body=' + x.responseText.substring(0, 120) })()",
+      "contains": "csrf=ok status=403"
+    },
+    {
+      "action": "evalExpect",
+      "name": "door-8-support-tickets-403",
+      "expr": "(() => { const x = new XMLHttpRequest(); x.open('GET', '/api/moderation/support-tickets', false); x.send(); return 'status=' + x.status + ' body=' + x.responseText.substring(0, 120) })()",
+      "contains": "status=403 body={\\\"error\\\":\\\"Forbidden"
+    },
+    {
+      "action": "evalExpect",
+      "name": "door-9-user-lookup-403",
+      "expr": "(() => { const x = new XMLHttpRequest(); x.open('GET', '/api/moderation/user-lookup?userId=u_me', false); x.send(); return 'status=' + x.status + ' body=' + x.responseText.substring(0, 120) })()",
+      "contains": "status=403 body={\\\"error\\\":\\\"Forbidden"
+    },
+    {
+      "action": "evalExpect",
+      "name": "member-still-signed-in-after-refusals",
+      "expr": "(() => 'session=' + (localStorage.getItem('ft_session') || 'none') + ' url=' + window.location.pathname + window.location.search)()",
+      "contains": "session=u_me"
+    },
+    { "action": "shot", "label": "03-member-world-unaffected", "expectText": "Vintage steel road bike" }
+  ]
+}

@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+# Pre-commit hook — gitleaks secret scan (with grep fallback).
+#
+# Per docs/SECURITY-WORKFLOW-AND-GATES.md Part 4 (secret scanning — every
+# commit + CI). Defense-in-depth: this runs in addition to verify-layer4.sh
+# check 5c (AST secret grep) + Semgrep secrets rules in CI.
+#
+# Strategy:
+# 1. If `gitleaks` is on $PATH: run `gitleaks detect --staged --redact`.
+#    (Best — true secret detection with entropy + pattern matching.)
+# 2. Else: fall back to a grep-based scan of staged files for common
+#    secret-like patterns (api_key, secret, token, password followed by
+#    `:=` + a 16+ char alphanumeric string). NOT as good as gitleaks but
+#    catches the obvious cases.
+#
+# Exit codes:
+#   0 — no secrets detected (commit proceeds)
+#   1 — potential secret detected (commit BLOCKED — fix the secret + retry)
+#
+# To bypass in an emergency (e.g., committing a test fixture with a fake
+# secret that gitleaks flags):
+#   git commit --no-verify
+# (Use sparingly — leaves a record in the reflog.)
+
+set -uo pipefail
+
+# Colors (if stdout is a TTY).
+if [ -t 1 ]; then
+  RED=$'\033[0;31m'
+  YEL=$'\033[0;33m'
+  GRN=$'\033[0;32m'
+  RST=$'\033[0m'
+else
+  RED=''; YEL=''; GRN=''; RST=''
+fi
+
+# Skip the hook entirely if NO_GITLEAKS_HOOK=1 (emergency escape hatch).
+if [ "${NO_GITLEAKS_HOOK:-0}" = "1" ]; then
+  exit 0
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Strategy 1: gitleaks (if installed)
+# ─────────────────────────────────────────────────────────────────────────────
+if command -v gitleaks >/dev/null 2>&1; then
+  # `--staged` scans only the staged changes; `--redact` masks secret values
+  # in the output (so we don't echo the secret back to the terminal).
+  # `--verbose` for the file:line:rule citations.
+  OUT=$(gitleaks detect --staged --redact --verbose 2>&1)
+  RC=$?
+  if [ "$RC" -eq 0 ]; then
+    echo "${GRN}✓ gitleaks: no secrets detected in staged changes${RST}"
+    exit 0
+  else
+    echo "${RED}✗ gitleaks: potential secret detected (commit BLOCKED):${RST}"
+    echo "$OUT"
+    echo ""
+    echo "${YEL}If this is a false positive (e.g., a test fixture with a fake secret):${RST}"
+    echo "  1. Add the file/pattern to .gitleaksignore"
+    echo "  2. Or commit with --no-verify (emergencies only — leaves a reflog record)"
+    exit 1
+  fi
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Strategy 2: grep fallback (if gitleaks is not installed)
+# ─────────────────────────────────────────────────────────────────────────────
+echo "${YEL}⚠ gitleaks not installed — falling back to grep-based secret scan (less accurate).${RST}"
+echo "${YEL}  Install gitleaks (https://github.com/gitleaks/gitleaks) for true secret detection.${RST}"
+
+# Get the list of staged files (excluding deletes).
+STAGED=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null | grep -vE '\.env\.example$' || true)
+
+if [ -z "$STAGED" ]; then
+  # No staged files → nothing to scan.
+  exit 0
+fi
+
+# Grep for secret-like patterns in staged files.
+# Pattern: (api_key|apikey|secret|token|password|password_hash) followed
+# by `:` or `=` followed by a 16+ char alphanumeric string.
+# Excludes: process.env, crypto.randomUUID, .env files, comments.
+HITS=0
+HIT_OUTPUT=""
+for f in $STAGED; do
+  # Skip if the file doesn't exist (already deleted, etc.)
+  [ -f "$f" ] || continue
+  # Only scan text files (skip binaries — node_modules is already in
+  # .gitignore so won't be staged, but defense in depth).
+  if file "$f" 2>/dev/null | grep -qi 'text\|json\|xml\|script'; then
+    MATCH=$(grep -nE '(api[_-]?key|secret|token|password)[[:space:]]*[:=][[:space:]]*["'"'"'][A-Za-z0-9]{16,}' "$f" 2>/dev/null \
+      | grep -v 'process\.env' \
+      | grep -v 'crypto\.randomUUID' \
+      | grep -v 'crypto\.randomBytes' \
+      | grep -vE '^\s*//' \
+      | grep -vE '^\s*\*' \
+      | grep -vE '^\s*#' || true)
+    if [ -n "$MATCH" ]; then
+      HIT_OUTPUT="${HIT_OUTPUT}${f}:
+${MATCH}
+
+"
+      HITS=$((HITS + 1))
+    fi
+  fi
+done
+
+if [ "$HITS" -eq 0 ]; then
+  echo "${GRN}✓ grep fallback: no obvious secrets detected in staged changes${RST}"
+  exit 0
+else
+  echo "${RED}✗ grep fallback: potential secret(s) detected (commit BLOCKED):${RST}"
+  echo "$HIT_OUTPUT"
+  echo "${YEL}If this is a false positive:${RST}"
+  echo "  1. Use a const ref instead of a literal: const API_KEY = process.env.API_KEY!"
+  echo "  2. Or move the literal to a .env file (gitignored)"
+  echo "  3. Or commit with --no-verify (emergencies only)"
+  exit 1
+fi

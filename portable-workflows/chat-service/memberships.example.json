@@ -1,0 +1,6 @@
+{
+  "conversations": [
+    { "id": "conv_demo", "participantIds": ["u_alice", "u_bob"] },
+    { "id": "conv_private", "participantIds": ["u_bob", "u_carol"] }
+  ]
+}

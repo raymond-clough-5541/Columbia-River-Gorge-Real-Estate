@@ -1,0 +1,48 @@
+{
+  "name": "ft-location-policy-blocked",
+  "description": "R210 P2 (security plan section 3): the Permissions-Policy-blocked context, verified after the R208 fix to geolocation=(self). The top-level same-origin document must be ALLOWED to ask (permission state 'prompt' - the fix's whole purpose); an EMBEDDED context (a transient sandboxed srcdoc iframe carrying an opaque origin - the class an embedder without allow=geolocation creates) must be DENIED by the policy. The probe iframe posts its result to the page and is removed after the read (a measurement instrument on evalExpect's read-only escape hatch - never touches app state; disclosed in the R210 plan).",
+  "base": "http://localhost:3000",
+  "viewport": "1280x900",
+  "settleMs": 2500,
+  "navRetries": 2,
+  "steps": [
+    { "action": "clear" },
+    {
+      "action": "nav",
+      "url": "/?surface=welcome",
+      "expectText": "Sign In",
+      "shot": "01-welcome-serves-the-policy",
+      "timeout": 30000
+    },
+    {
+      "action": "evalExpect",
+      "name": "serving-header-geolocation-self",
+      "expr": "(() => { const x = new XMLHttpRequest(); x.open('GET', '/', false); x.send(); const h = x.getAllResponseHeaders(); const line = h.split('\\r\\n').find((l) => l.toLowerCase().startsWith('permissions-policy')) || 'none'; return 'policy=' + line })()",
+      "contains": "geolocation=(self)"
+    },
+    {
+      "action": "evalExpect",
+      "name": "top-level-allowed-to-ask",
+      "expr": "navigator.permissions.query({ name: 'geolocation' }).then((s) => 'topLevel=' + s.state)",
+      "contains": "topLevel=prompt"
+    },
+    {
+      "action": "evalExpect",
+      "name": "top-level-featurepolicy-allows",
+      "expr": "(document.featurePolicy ? 'featurePolicyGeo=' + document.featurePolicy.allowsFeature('geolocation') : 'api-absent')",
+      "contains": "featurePolicyGeo=true"
+    },
+    {
+      "action": "evalExpect",
+      "name": "embedded-context-denied-by-policy",
+      "expr": "(() => new Promise((resolve) => { const f = document.createElement('iframe'); f.setAttribute('sandbox', 'allow-scripts'); f.setAttribute('aria-hidden', 'true'); f.setAttribute('style', 'display:none'); f.srcdoc = '<scr' + 'ipt>navigator.permissions.query({ name: \"geolocation\" }).then(function (s) { parent.postMessage({ r210embeddedGeo: s.state }, \"*\"); }).catch(function (e) { parent.postMessage({ r210embeddedGeo: \"err:\" + e.name }, \"*\"); })</scr' + 'ipt>'; let done = false; const finish = (v) => { if (done) return; done = true; window.removeEventListener('message', onMsg); clearTimeout(t); f.remove(); resolve('embedded=' + v); }; const onMsg = (ev) => { if (ev.data && typeof ev.data.r210embeddedGeo === 'string') finish(ev.data.r210embeddedGeo); }; window.addEventListener('message', onMsg); const t = setTimeout(() => finish('timeout'), 5000); document.body.appendChild(f); }))()",
+      "contains": "embedded=denied"
+    },
+    {
+      "action": "evalExpect",
+      "name": "top-level-still-allowed-after-probe",
+      "expr": "navigator.permissions.query({ name: 'geolocation' }).then((s) => 'topLevelAfter=' + s.state)",
+      "contains": "topLevelAfter=prompt"
+    }
+  ]
+}

@@ -1,0 +1,47 @@
+{
+  "name": "ft-lookup-idor",
+  "description": "R210 P2 (security plan section 2 / section 5): the lookup IDOR probe, member leg. Jordan Lee (plain member, the real scrypt door) fetches the moderator's user-lookup door with his own session: the search (?q=), the detail (?userId=u_me), and the bare door must all refuse with 403 (the R206 grammar, live in the browser).",
+  "base": "http://localhost:3000",
+  "viewport": "1280x900",
+  "settleMs": 2500,
+  "navRetries": 2,
+  "steps": [
+    { "action": "clear" },
+    {
+      "action": "nav",
+      "url": "/?surface=welcome",
+      "expectText": "Sign In",
+      "timeout": 30000
+    },
+    { "action": "click", "role": "tab", "name": "Sign In" },
+    { "action": "fill", "label": "Email", "text": "jordan@example.com" },
+    { "action": "fill", "label": "Password", "text": "testpass123" },
+    { "action": "press", "key": "Enter" },
+    { "action": "wait", "text": "Vintage steel road bike", "timeout": 20000, "critical": true },
+    { "action": "expect", "urlContains": "surface=app" },
+    {
+      "action": "evalExpect",
+      "name": "lookup-search-403",
+      "expr": "(() => { const x = new XMLHttpRequest(); x.open('GET', '/api/moderation/user-lookup?q=jordan', false); x.send(); return 'status=' + x.status + ' body=' + x.responseText.substring(0, 120) })()",
+      "contains": "status=403 body={\\\"error\\\":\\\"Forbidden"
+    },
+    {
+      "action": "evalExpect",
+      "name": "lookup-detail-idor-403",
+      "expr": "(() => { const x = new XMLHttpRequest(); x.open('GET', '/api/moderation/user-lookup?userId=u_me', false); x.send(); return 'status=' + x.status + ' body=' + x.responseText.substring(0, 120) })()",
+      "contains": "status=403 body={\\\"error\\\":\\\"Forbidden"
+    },
+    {
+      "action": "evalExpect",
+      "name": "lookup-bare-door-403-before-400",
+      "expr": "(() => { const x = new XMLHttpRequest(); x.open('GET', '/api/moderation/user-lookup', false); x.send(); return 'status=' + x.status + ' body=' + x.responseText.substring(0, 120) })()",
+      "contains": "status=403 body={\\\"error\\\":\\\"Forbidden"
+    },
+    {
+      "action": "evalExpect",
+      "name": "member-still-signed-in",
+      "expr": "(() => 'session=' + (localStorage.getItem('ft_session') || 'none'))()",
+      "contains": "session=u_me"
+    }
+  ]
+}
