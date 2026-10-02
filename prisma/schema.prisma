@@ -1,0 +1,71 @@
+// Prisma schema — Columbia River Gorge National Scenic Area (CRGNSA)
+// Real Estate & Land Supply Analytics platform.
+// A Supabase/PostgreSQL equivalent migration (with RLS policies) ships in
+// /supabase/migration.sql for production deployment.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// One row per micro-market jurisdiction inside the CRGNSA corridor.
+model Submarket {
+  id                    String            @id @default(uuid())
+  slug                  String            @unique
+  name                  String
+  state                 String // "OR" | "WA"
+  county                String
+  jurisdictionType      String // "Incorporated City" | "Unincorporated Urban Area"
+  regulatoryFramework   String // "Goal 14 UGB" | "GMA UGA / Partial Planning" | "GMA UGA / Full Planning"
+  totalFootprintAcres   Float
+  grossVacantAcres      Float
+  netBuildableAcresMin  Float
+  netBuildableAcresMax  Float
+  baselinePrice2026     Float // midpoint of the 2026 baseline band
+  pricePerSqftMin       Float
+  pricePerSqftMax       Float
+  daysOnMarketMin       Int
+  daysOnMarketMax       Int
+  projectedCagr         Float // percent, e.g. 5.8 == 5.8%
+  projectedPrice2046Min Float
+  projectedPrice2046Max Float
+  waterPurveyor         String
+  wastewaterSystem      String
+  primaryConstraints    String
+  summaryNarrative      String
+  depletionYear         Int // estimated year of terminal raw-land depletion
+  mapX                  Float // 0-100 relative position on corridor map
+  mapY                  Float // 0-100 relative position on corridor map
+  createdAt             DateTime          @default(now())
+  listings              PropertyListing[]
+
+  @@index([state])
+  @@index([jurisdictionType])
+}
+
+// Curated property listings across the corridor.
+model PropertyListing {
+  id           String    @id @default(uuid())
+  submarketId  String
+  submarket    Submarket @relation(fields: [submarketId], references: [id], onDelete: Cascade)
+  title        String
+  propertyType String // "Single-Family" | "Luxury Agricultural/Farm Estate" | "Infill Multi-Family" | "Land Parcel"
+  price        Float
+  acreage      Float
+  bedrooms     Int
+  bathrooms    Float
+  squareFeet   Int
+  zoningCode   String
+  description  String
+  imageUrl     String
+  featured     Boolean   @default(false)
+  status       String    @default("Active") // "Active" | "Pending" | "New"
+  createdAt    DateTime  @default(now())
+
+  @@index([submarketId])
+  @@index([propertyType])
+}
