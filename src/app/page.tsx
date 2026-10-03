@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { fetchLedgerData } from "@/lib/data-service";
 import { GorgeApp } from "@/components/gorge/gorge-app";
 import {
   DEFAULT_REGION_SLUG,
@@ -17,39 +17,18 @@ export const dynamic = "force-dynamic";
 
 /**
  * Server Component entry — fetches the full region-registry ledger from
- * SQLite via Prisma on the server and hands it to the client analytics
+ * Prisma or fallback static snapshot on the server and hands it to the client analytics
  * shell. Round 15: ALL regions ship to the client; the shell scopes each
  * workspace to the active region in the hash route (#/r/<slug>/matrix …).
  * The SSR stats snapshot stays scoped to the DEFAULT region so the
  * server-rendered overview matches the post-hydration corridor view.
  */
 export default async function Page() {
-  const regionRows = await db.region.findMany({
-    orderBy: { launchOrder: "asc" },
-  });
-
-  const submarketRows = await db.submarket.findMany({
-    orderBy: [{ state: "asc" }, { name: "asc" }],
-    include: { listings: { select: { id: true } } },
-  });
-
-  const listingRows = await db.propertyListing.findMany({
-    orderBy: [{ featured: "desc" }, { price: "desc" }],
-    include: {
-      submarket: {
-        select: {
-          slug: true,
-          name: true,
-          state: true,
-          county: true,
-          regulatoryFramework: true,
-          projectedCagr: true,
-          depletionYear: true,
-          baselinePrice2026: true,
-        },
-      },
-    },
-  });
+  const {
+    regions: regionRows,
+    submarkets: submarketRows,
+    listings: listingRows,
+  } = await fetchLedgerData();
 
   const submarkets: Submarket[] = submarketRows.map((s) => ({
     ...s,
@@ -114,7 +93,11 @@ export default async function Page() {
       taxArbitrageNote: r.taxArbitrageNote,
       targetSubmarkets: r.targetSubmarkets,
       launchOrder: r.launchOrder,
-      launchedAt: r.launchedAt ? r.launchedAt.toISOString() : null,
+      launchedAt: r.launchedAt
+        ? typeof r.launchedAt === "string"
+          ? r.launchedAt
+          : r.launchedAt.toISOString()
+        : null,
       aggregate,
     };
   });
@@ -122,7 +105,8 @@ export default async function Page() {
   const listings: PropertyListing[] = listingRows.map((l) => ({
     ...l,
     propertyType: l.propertyType as PropertyType,
-    createdAt: l.createdAt.toISOString(),
+    createdAt:
+      typeof l.createdAt === "string" ? l.createdAt : l.createdAt.toISOString(),
     submarket: l.submarket
       ? { ...l.submarket, state: l.submarket.state as StateCode }
       : null,

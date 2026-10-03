@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { getSubmarketBySlug } from "@/lib/data-service";
 
 export const dynamic = "force-dynamic";
 
@@ -10,12 +10,7 @@ export async function GET(
 ) {
   try {
     const { slug } = await params;
-    const submarket = await db.submarket.findUnique({
-      where: { slug },
-      include: {
-        listings: { orderBy: { price: "desc" } },
-      },
-    });
+    const submarket = await getSubmarketBySlug(slug);
 
     if (!submarket) {
       return NextResponse.json(
