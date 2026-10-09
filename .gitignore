@@ -64,3 +64,6 @@ logs/
 .audit-out/
 __pycache__/
 tool-results/
+
+.vercel
+.env*

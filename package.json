@@ -9,7 +9,7 @@
     "postinstall": "prisma generate",
     "start": "NODE_ENV=production bun .next/standalone/server.js 2>&1 | tee server.log",
     "lint": "eslint .",
-    "prepare": "bash scripts/setup-git-hooks.sh",
+    "prepare": "bash scripts/setup-git-hooks.sh || true",
     "hooks:setup": "bash scripts/setup-git-hooks.sh",
     "hooks:status": "git config --get core.hooksPath && ls scripts/git-hooks/",
     "redeploy": "bash scripts/redeploy.sh",
